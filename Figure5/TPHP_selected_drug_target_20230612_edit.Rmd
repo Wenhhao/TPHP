@@ -1,0 +1,2779 @@
+---
+title: "TPHP_selected_drug_target"
+author: ""
+date: '2022-11-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+library(tidyverse)
+library(magrittr)
+library(ggpubr)
+
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+# my_uniprot2prot <- function(vec_uni){
+#   vec_prot <- lapply(vec_uni, function(uniprotid){
+#     # my_html <- rvest::read_html(stringr::str_glue('https://www.uniprot.org/uniprotkb/{uniprotid}/entry'))
+#     my_html <- rvest::read_html(stringr::str_glue('https://rest.uniprot.org/genecentric/{uniprotid}')) # 2022-08-08 update; get json
+#     my_json <- my_html %>%
+#       rvest::html_text() %>%
+#       jsonlite::fromJSON()
+#     
+#     prot <- my_json$canonicalProtein$proteinName
+#     return(prot)
+#   }) %>% unlist
+#   return(stringr::str_c(vec_uni, vec_prot, sep = '_'))
+# }
+
+```
+
+# read selected diff-proteins
+```{r}
+
+xlsx_vec <- list.files('Z:/members/yuel/1project/0_TPHP/2_figures/20220712',
+                       '*\\.xlsx',
+                       full.name = T)
+# xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/', '^20230318_CA_ADJ_volcanoplot.+?\\.xlsx$', full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p', '') %>%
+  str_replace('\\.xlsx$', '')
+# names(name1_ls)[2] == 'cervix uteri' # FALSE
+# names(name1_ls)[2] <- 'cervix uteri'
+
+c_adj_up_list <- list()
+c_adj_down_list <- list()
+for (i in 1:length(name1_ls)){
+    # c_adj_list <- read.delim(paste(path, "\\", c_adj[i], sep=""),
+    # sep = "\t", header = T, stringsAsFactors = F, colClasses = c("character", "NULL", "NULL", "character"))
+    c_adj_list <- name1_ls[[i]]
+    # c_adj_up, less than 50% missing value
+    c_adj_up <- c_adj_list[which(c_adj_list$type == "Upregulation"), 1]
+    
+    # c_adj_down, less than 50% missing value
+    c_adj_down <- c_adj_list[which(c_adj_list$type == "Downregulation"), 1]
+    
+    c_adj_up_list[[i]] <- as.data.frame(c_adj_up)
+    c_adj_down_list[[i]] <- as.data.frame(c_adj_down)
+}
+c_adj_tab_up <- t(plyr::rbind.fill(sapply(c_adj_up_list, function(v){as.data.frame(t(v))})))
+c_adj_tab_down <- t(plyr::rbind.fill(sapply(c_adj_down_list, function(v){as.data.frame(t(v))})))
+colnames(c_adj_tab_up) <- colnames(c_adj_tab_down) <- names(name1_ls)
+
+
+c_adj_tab <- plyr::ldply(name1_ls, .id = 'organ')
+c_adj_tab %<>% select(organ, prot, fc) %>% setNames(c('organ', 'Uniprot', 'fc'))
+
+
+
+
+```
+
+
+# 1. TOP1 (P11387)
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 8023
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## all organs
+```{r}
+# df_selected %<>% arrange(tissue_name, cancer_type)
+df_selected[df_selected$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_selected[df_selected$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+# df_selected[df_selected$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+dim(df_selected) # 1099 8023
+colnames(df_selected) %>% head
+colnames(df_selected) %>% tail
+colnames(df_selected)[1:6]
+
+# pm <- df_selected %>%
+#   select(-(1:5)) %>%
+#   t() %>%
+#   as.data.frame() %>%
+#   setNames(df_selected$FileName)
+
+my_plot <- function(df){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio < 0.9) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  my_title <- my_uniprot2prot(my_uni)
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- 'Non-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+# prot_targets <- c('P78367', 'Q8WZ60')
+prot_targets <- c('P11387') # TOP1
+df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+
+plots <- list()
+df <- df_expr %>% select(1:2, 3)
+plots[[1]] <- my_plot(df)
+
+# df <- df_expr %>% select(1:2, 4)
+# plots[[2]] <- my_plot(df)
+
+p <- eval(parse(text = stringr::str_c('ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', ncol = 1)')))
+
+ggsave('TPHP_CA_TOP1_P11387_expr_20221118.pdf', p, width = 15, height = 6)
+
+
+```
+
+
+## only breast and endometrial
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/yuel/2022/dysregulated proteins/',
+                       '^[^~]*\\.xlsx',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P11387')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P11387', organ %in% c('mammary gland', 'uterus')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'uterus'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+my_title <- my_uniprot2prot(my_uni)
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>% str_replace_all('mammary gland', 'Breast carcinoma') %>% str_replace_all('uterus', 'Endometrial carcinoma') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_TOP1_P11387_expr_breast_endometrial_20221217.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+
+# 2. Antibody: TACSTD2 (P09758)
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 8023
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## all organs
+```{r}
+# df_selected %<>% arrange(tissue_name, cancer_type)
+df_selected[df_selected$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_selected[df_selected$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+# df_selected[df_selected$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+dim(df_selected) # 1099 8023
+colnames(df_selected) %>% head
+colnames(df_selected) %>% tail
+colnames(df_selected)[1:6]
+
+# pm <- df_selected %>%
+#   select(-(1:5)) %>%
+#   t() %>%
+#   as.data.frame() %>%
+#   setNames(df_selected$FileName)
+
+my_plot <- function(df){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio < 0.9) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  my_title <- my_uniprot2prot(my_uni)
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- 'Non-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+# prot_targets <- c('P78367', 'Q8WZ60')
+prot_targets <- c('P09758') # TACSTD2
+df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+
+plots <- list()
+df <- df_expr %>% select(1:2, 3)
+plots[[1]] <- my_plot(df)
+
+# df <- df_expr %>% select(1:2, 4)
+# plots[[2]] <- my_plot(df)
+
+p <- eval(parse(text = stringr::str_c('ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', ncol = 1)')))
+
+ggsave('TPHP_CA_TACSTD2_P09758_expr_20221118.pdf', p, width = 15, height = 6)
+
+
+```
+
+
+## only breast and endometrial
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P09758')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P09758', organ %in% c('mammary gland', 'uterus')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'uterus'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+my_title <- my_uniprot2prot(my_uni)
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>% str_replace_all('mammary gland', 'Breast carcinoma') %>% str_replace_all('uterus', 'Endometrial carcinoma') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_TACSTD2_P09758_expr_breast_endometrial_20221217.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+
+
+# 3. PARP1 (P09874)
+PARP1 was upregulated in breast cancer and gynecologic cancers such as ovarian cancer, endometrial cancer, and cervical cancer.
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 9259
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## all organs
+```{r}
+# df_selected %<>% arrange(tissue_name, cancer_type)
+df_selected[df_selected$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_selected[df_selected$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+# df_selected[df_selected$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+dim(df_selected) # 1099 9259
+colnames(df_selected) %>% head
+colnames(df_selected) %>% tail
+colnames(df_selected)[1:6]
+
+# pm <- df_selected %>%
+#   select(-(1:5)) %>%
+#   t() %>%
+#   as.data.frame() %>%
+#   setNames(df_selected$FileName)
+
+my_plot <- function(df, refer = 'local'){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio < 0.9) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  if(refer == 'uniprot'){
+    my_title <- my_uniprot2prot(my_uni)
+  } else if(refer == 'local'){
+    my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+  }
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- 'Non-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+# prot_targets <- c('P78367', 'Q8WZ60')
+prot_targets <- c('P09874') # PARP1
+df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+
+plots <- list()
+df <- df_expr %>% select(1:2, 3)
+plots[[1]] <- my_plot(df)
+
+# df <- df_expr %>% select(1:2, 4)
+# plots[[2]] <- my_plot(df)
+
+p <- eval(parse(text = stringr::str_c('ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', ncol = 1)')))
+
+ggsave('TPHP_CA_PARP1_P09874_expr_20230514.pdf', p, width = 15, height = 6)
+
+
+```
+
+
+## only breast, ovarian, endometrial, and cervical
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P09874')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P09874', organ %in% c('mammary gland', 'ovary', 'uterus', 'cervix_uteri')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_ovary <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+anno_cervix_uteri <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'ovary', 'uterus', 'cervix_uteri'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+# my_title <- my_uniprot2prot(my_uni) # uniprot database
+my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>%
+  str_replace_all('mammary gland', 'BRCA') %>%
+  str_replace_all('ovary', 'OC') %>%
+  str_replace_all('uterus', 'ENCA') %>%
+  str_replace_all('cervix_uteri', 'CESC') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_ovary, color = '#000000', size = 4)+
+  annotate('text', x = 2.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  annotate('text', x = 3.5, y = max(df$intensity) * 1.01, label = anno_cervix_uteri, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_PARP1_P09874_expr_breast_ovary_endometrial_cervix_20230514.pdf', rlt$p, width = 16, height = 8)
+
+
+
+
+```
+
+# 4. CDK4 (P11802)
+CDK4 was upregulated in breast cancer, cervical cancer, and ovarian cancer. And CDK6 was upregulated in breast cancer, cervical cancer, and endometrial cancer.
+Abemaciclib has been approved for the treatment of breast cancer.
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 9259
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## all organs
+```{r}
+# df_selected %<>% arrange(tissue_name, cancer_type)
+df_selected[df_selected$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_selected[df_selected$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+# df_selected[df_selected$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+dim(df_selected) # 1099 9259
+colnames(df_selected) %>% head
+colnames(df_selected) %>% tail
+colnames(df_selected)[1:6]
+
+# pm <- df_selected %>%
+#   select(-(1:5)) %>%
+#   t() %>%
+#   as.data.frame() %>%
+#   setNames(df_selected$FileName)
+
+my_plot <- function(df, refer = 'local'){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio < 0.9) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  if(refer == 'uniprot'){
+    my_title <- my_uniprot2prot(my_uni)
+  } else if(refer == 'local'){
+    my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+  }
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- 'Non-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+# prot_targets <- c('P78367', 'Q8WZ60')
+prot_targets <- c('P11802') # CDK4
+df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+
+plots <- list()
+df <- df_expr %>% select(1:2, 3)
+plots[[1]] <- my_plot(df)
+
+# df <- df_expr %>% select(1:2, 4)
+# plots[[2]] <- my_plot(df)
+
+p <- eval(parse(text = stringr::str_c('ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', ncol = 1)')))
+
+ggsave('TPHP_CA_CDK4_P11802_expr_20230514.pdf', p, width = 15, height = 6)
+
+
+```
+
+
+## only breast, ovarian, and cervical
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P11802')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P11802', organ %in% c('mammary gland', 'ovary', 'cervix_uteri')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_ovary <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(p_value), 3)}")
+anno_cervix_uteri <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'ovary', 'cervix_uteri'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+# my_title <- my_uniprot2prot(my_uni) # uniprot database
+my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>%
+  str_replace_all('mammary gland', 'BRCA') %>%
+  str_replace_all('ovary', 'OC') %>%
+  str_replace_all('cervix_uteri', 'CESC') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_ovary, color = '#000000', size = 4)+
+  annotate('text', x = 2.5, y = max(df$intensity) * 1.01, label = anno_cervix_uteri, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_CDK4_P11802_expr_breast_ovary_cervix_20230514.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+# 5. CDK6 (Q00534)
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 9259
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## all organs
+```{r}
+# df_selected %<>% arrange(tissue_name, cancer_type)
+df_selected[df_selected$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_selected[df_selected$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+# df_selected[df_selected$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+dim(df_selected) # 1099 9259
+colnames(df_selected) %>% head
+colnames(df_selected) %>% tail
+colnames(df_selected)[1:6]
+
+# pm <- df_selected %>%
+#   select(-(1:5)) %>%
+#   t() %>%
+#   as.data.frame() %>%
+#   setNames(df_selected$FileName)
+
+my_plot <- function(df, refer = 'local'){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio < 0.9) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  if(refer == 'uniprot'){
+    my_title <- my_uniprot2prot(my_uni)
+  } else if(refer == 'local'){
+    my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+  }
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- 'Non-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+# prot_targets <- c('P78367', 'Q8WZ60')
+prot_targets <- c('Q00534') # CDK6
+df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+
+plots <- list()
+df <- df_expr %>% select(1:2, 3)
+plots[[1]] <- my_plot(df)
+
+# df <- df_expr %>% select(1:2, 4)
+# plots[[2]] <- my_plot(df)
+
+p <- eval(parse(text = stringr::str_c('ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', ncol = 1)')))
+
+ggsave('TPHP_CA_CDK6_Q00534_expr_20230514.pdf', p, width = 15, height = 6)
+
+
+```
+
+
+## only breast, ovarian, endometrial, and cervical
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'Q00534')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'Q00534', organ %in% c('mammary gland', 'uterus', 'cervix_uteri')) %>%
+  mutate(fc = 2 ^ fc)
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+anno_cervix_uteri <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('uterus', 'cervix_uteri'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+# my_title <- my_uniprot2prot(my_uni) # uniprot database
+my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>%
+  str_replace_all('uterus', 'ENCA') %>%
+  str_replace_all('cervix_uteri', 'CESC') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_cervix_uteri, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_CDK6_Q00534_expr_endometrial_cervix_20230514.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+
+
+#===================
+# use boxplot
+## 1. PARP1 (P09874)
+PARP1 was upregulated in breast cancer and gynecologic cancers such as ovarian cancer, endometrial cancer, and cervical cancer.
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+library(tidyverse)
+library(magrittr)
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 9259
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## only breast, ovarian, endometrial, and cervical
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P09874')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P09874', organ %in% c('mammary gland', 'ovary', 'uterus', 'cervix_uteri')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_ovary <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'ovary') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+anno_cervix_uteri <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'cervix_uteri') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'ovary', 'uterus', 'cervix_uteri'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+# my_title <- my_uniprot2prot(my_uni) # uniprot database
+my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>%
+  str_replace_all('mammary gland', 'BRCA') %>%
+  str_replace_all('ovary', 'OC') %>%
+  str_replace_all('uterus', 'ENCA') %>%
+  str_replace_all('cervix_uteri', 'CESC') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_ovary, color = '#000000', size = 4)+
+  annotate('text', x = 2.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  annotate('text', x = 3.5, y = max(df$intensity) * 1.01, label = anno_cervix_uteri, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_PARP1_P09874_expr_breast_ovary_endometrial_cervix_20230514.pdf', rlt$p, width = 16, height = 8)
+
+
+
+
+```
+
+
+
+## 2. TOP1 (P11387)
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 8023
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## only breast and endometrial
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/yuel/2022/dysregulated proteins/',
+                       '^[^~]*\\.xlsx',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P11387')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P11387', organ %in% c('mammary gland', 'uterus')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'uterus'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+my_title <- my_uniprot2prot(my_uni)
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>% str_replace_all('mammary gland', 'Breast carcinoma') %>% str_replace_all('uterus', 'Endometrial carcinoma') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_TOP1_P11387_expr_breast_endometrial_20221217.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+
+## 3. Antibody: TACSTD2 (P09758)
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+require(magrittr)
+require(tidyverse)
+
+
+
+df_info <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/202207TPHP_1781file_info_edited_v4.xlsx')
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/matrix/20220718TPHP_combined_ca_nomal_info.xlsx',
+                         col_types = c(rep('guess', 16), rep('numeric', 13413)), na = '')
+dim(df) # 1781 13429
+colnames(df) %>% head
+colnames(df) %>% tail
+colnames(df)[1:17]
+
+pm <- df %>% select(FileName, 17:13429)
+df1 <- df_info %>%
+  inner_join(pm, by = 'FileName') %>%
+  arrange(anatomical_classification, anatomical_location, tissue_name)
+dim(df1) # 1781 13431
+colnames(df1)[1:19]
+
+# 
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>%
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # carcinoma and adjacent
+  # filter(sample_type %in% c('carcinoma')) %>% # only carcinoma
+  dplyr::select(FileName, sample_type, tissue_name, anatomical_location, anatomical_classification, 19:13431)
+dim(df2) # 1101 13418
+
+df2[str_detect(df2$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df2[str_detect(df2$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df2[str_detect(df2$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df_selected <- df2 %>%
+  filter(anatomical_classification %in% names(name1_ls)) %>%
+  rename(organ = anatomical_classification,
+         cancer_type = sample_type) %>%
+  select(FileName, organ, cancer_type, c_adj_tab$Uniprot) %>%
+  removeColsAllNa()
+dim(df_selected) # 1099 8023
+
+
+nafill <- min(pm[, -1], na.rm = T) + log2(0.8) # min * 0.8
+
+
+
+```
+
+
+## only breast and endometrial
+```{r}
+# fc and pvalue
+xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/',
+                       '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$',
+                       full.name = T)
+name1_ls <- lapply(xlsx_vec, function(xlsx){
+  df1 <- readxl::read_excel(xlsx, sheet = 'up')
+  df2 <- readxl::read_excel(xlsx, sheet = 'down')
+  ret <- rbind(df1, df2)
+  return(ret)
+})
+
+names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+  str_replace('^0\\.05p_', '') %>%
+  str_replace('\\.xlsx$', '')
+names(name1_ls)[2] <- 'cervix_uteri'
+df_fcp <- plyr::ldply(name1_ls, .id = 'organ')
+df_fcp %>% filter(prot == 'P09758')
+
+df_fcp_anno <- df_fcp %>% filter(prot == 'P09758', organ %in% c('mammary gland', 'uterus')) %>%
+  mutate(fc = 2 ^ fc)
+anno_breast <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'mammary gland') %>% pull(p_value), 3)}")
+anno_uterus <- str_glue("|FC|={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(fc), 3)}; Adj P={signif(df_fcp_anno %>% filter(organ == 'uterus') %>% pull(p_value), 3)}")
+
+
+# visulization
+df <- df_expr
+df <- df %>%
+  add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+  dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+  arrange(organ, cancer_type) %>%
+  dplyr::mutate(cancer_type = as.character(cancer_type)) %>%
+  filter(organ %in% c('mammary gland', 'uterus'))
+
+#remove organ with all subtypes >= 90% NA ratio
+na_ratio <- function(x) sum(is.na(x)) / length(x)
+organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+  summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+  ungroup() %>%
+  filter(na_ratio < 0.9) %>%
+  pull(organ) %>%
+  unique()
+df %<>% filter(organ %in% organ_selected)
+
+rlt <- list()
+#df[is.na(df)] <- 6.759341
+df_fillrate <- df
+my_uni <- colnames(df)[ncol(df)]
+my_title <- my_uniprot2prot(my_uni)
+colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+
+
+df <- na.omit(df)
+df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+
+# color setting
+df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+# pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+my_fills <- pseudo_ht_color[df$cancer_type]
+names(my_fills) <- df$cancer_type
+
+# text plotting
+my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+my_vlines <- 1:length(unique(df$organ))
+x <- c()
+for(i in 1:length(unique(df$organ))){
+  df_tmp <- df[df$organ == unique(df$organ)[i],]
+  x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+  x <- append(x, x_tmp)
+}
+df$x <- x
+
+# barplot preparation
+df_bar <- lapply(unique(df_fillrate$organ), function(e){
+  df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+  df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+    vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+    return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+  }) %>% as.data.frame(stringsAsFactor = F)
+  colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+  rownames(df_ttmp) <- e
+  return(df_ttmp)
+}) %>% do.call(plyr::rbind.fill, .)
+df_bar$organ <- unique(df_fillrate$organ)
+df_bar %<>% reshape2::melt()
+colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+df_bar %<>% na.omit
+df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+pseudo_ht_bar <- seq(from = 0.25, to = length(unique(df_bar$organ)), by = 1/2)
+names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+
+df_bar$x <- pseudo_ht_bar[df_bar$label]
+df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+nmax <- max(df$intensity); nmin <- min(df$intensity)
+#df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+# double coordinates
+fillingvalue_x <- max(df$x) + 0.5
+fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+fillingtitle <- '1-missing rate'
+fillingtitle_pos <- mean(c(nmin, nmax))
+#hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+
+# figure
+tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+tmp %<>% str_replace_all('mammary gland', 'Breast carcinoma') %>% str_replace_all('uterus', 'Endometrial carcinoma') # change organ name to cancer name
+
+p <- ggplot()+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.5)+
+  geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.5)+# block non-missing rate lower than 0
+  geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+  geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+  annotate('text', x = 0.5, y = max(df$intensity) * 1.01, label = anno_breast, color = '#000000', size = 4)+
+  annotate('text', x = 1.5, y = max(df$intensity) * 1.01, label = anno_uterus, color = '#000000', size = 4)+
+  #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+  #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+  annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+  annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+  labs(
+    y = 'log10 Intensity', title = my_title
+  )+
+  geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+  coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+  scale_x_continuous(expand = c(0, 0))+
+  theme(panel.grid = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        axis.ticks.y = element_blank()
+  )
+rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+
+
+
+ggsave('TPHP_CA_TACSTD2_P09758_expr_breast_endometrial_20221217.pdf', rlt$p, width = 8, height = 8)
+
+
+
+
+```
+
+
+# 
+```{r}
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/clinical_trials_download')
+
+library(tidyverse)
+library(magrittr)
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+
+
+
+# read matrix
+df1 <- read.csv('//172.16.13.136/share/members/yuel/2022/tables/20230318_PUH_submatrix_combine_5_missing.csv', check.names = F) # CA combine 50 missing submatrice
+
+# df_pair <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_CA_ADJ_pairs_for_DPA_998_13390prot.xlsx')
+# 
+# 
+# # read dia specific proteins
+# dia_target <- read.csv('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318yuel_TPHP_CA_targetlist_3.csv', check.names = F)
+
+#get abbreviations
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+
+# colnames(dia_target) <- sapply(colnames(dia_target), function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+# 
+# dia_specific <- dia_target %>% pivot_longer(cols = everything(), names_to = 'organ', values_to = 'prot', values_drop_na = T)
+# # tbl <- dia_specific %>% filter(prot %in% prot_validated) %>% mutate(data = 'DIA')
+# 
+# protinfo <- dia_specific
+# protinfo$cancer_type <- 'carcinoma'
+# protinfo %<>% arrange(organ, desc(cancer_type))
+# # add gene name
+# uni_entr <- clusterProfiler::bitr(protinfo$prot,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% setNames(c('UniprotID', 'target_genes'))
+# protinfo <- dplyr::full_join(protinfo, uni_entr, by = c('prot' = 'UniprotID'))
+# protinfo %<>% rename(UniprotID = prot)
+# 
+
+# df_prot <- rio::import('20230318_PUH_PRM_submatrix_combine_5_missing.csv') # use submatrix combine matrix
+df_prot <- df1 %>% rename(cancer_type = sample_type) %>% select(-anatomical_classification)
+colnames(df_prot)[1:6]
+df_prot[str_detect(df_prot$organ, 'cervix'), 'organ'] <- 'cervix uteri'
+df_prot$organ <- sapply(df_prot$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+df_prot %>% count(organ)
+
+# 
+# # remove brain and skin
+# protinfo %<>% filter(!(organ %in% c('CE', 'SKI')))
+# df_prot %<>% filter(!(organ %in% c('CE', 'SKI')))
+
+
+
+
+# # filter missing ratio < 50%
+# na_ratio <- c()
+# for(i in 1:nrow(protinfo)){
+#   this_prot <- protinfo$UniprotID[i]
+#   this_organ <- protinfo$organ[i]
+#   this_cancer <- protinfo$cancer_type[i]
+# 
+#   x <- df_prot %>% filter(organ == this_organ, cancer_type == this_cancer) %>%
+#     pull(all_of(this_prot))
+#   na_ratio[i] <- sum(is.na(x)) / length(x)
+# }
+# protinfo %<>% filter(all_of(na_ratio) < 0.5)
+
+df_diff_all <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+df_diff_all[str_detect(df_diff_all$organ, 'cervix'), 'organ'] <- 'cervix uteri'
+df_diff_all$organ <- sapply(df_diff_all$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+# 
+# protinfo %<>% left_join(df_diff_all, by = c('organ', UniprotID = 'protein'))
+
+
+selected_targets <- c('P09874', 'P11387', 'P09758')
+df_prot %<>% dplyr::select(1:5, all_of(selected_targets))
+
+# 
+# df_info <- df_prot %>% dplyr::select(1:5)
+# rownames(df_info) <- df_info$DIA_ID
+
+
+# remark
+df_prot[df_prot$cancer_type == 'carcinoma', 'cancer_type'] <- '1_carcinoma'
+df_prot[df_prot$cancer_type == 'adjacent', 'cancer_type'] <- '2_adjacent'
+
+# data prepare
+df_expr <- df_prot %>%
+  select(-DIA_ID) %>%
+  select(organ, cancer_type, everything())
+df_expr[df_expr$cancer_type == '1_carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == '2_adjacent', 'cancer_type'] <- 'Adj'
+
+
+
+# source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+df_log10 <- df_expr %>% mutate_if(is.numeric, log10)
+na_filling <- log10(min(df_prot[, -(1:5)],na.rm = T)) + log10(0.5)
+
+
+protinfo1 <- df_diff_all %>%
+  filter(protein %in% selected_targets, organ %in% c('CU', 'MAG', 'OV', 'UTE')) %>%
+  rename(UniprotID = protein)
+
+plots <- list()
+for(i in 1:nrow(protinfo1)){
+  # anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)},\npAdj={signif(protinfo$pAdj[i], 3)}")
+  # anno_txt <- sprintf("%1.2f (%1.2e)", 2 ^ protinfo$log2FC[i], protinfo$pAdj[i])
+  anno_txt <- sprintf("%1.2e", protinfo1$pAdj_t[i])
+  plots[[i]] <- df_log10 %>%
+    select(organ, cancer_type, patient_ID, all_of(protinfo1$UniprotID[i])) %>%
+    my_plot_CA_boxviolin(organ = protinfo1$organ[i], na_cutoff = 1, refer = 'local',
+                         anno_txt = anno_txt)
+}
+
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+ggsave('TPHP_DIA_CA_specific_expr_boxviolin_line_clinicalTrials_3prots_20230612.pdf', p, width = 297 * 1.5, height = 210 * 4, units = "mm")
+# protinfo1 %>% rio::export('TPHP_DIA_CA_specific_expr_boxviolin_line_F5_3prots_20230513.xlsx')
+
+
+
+
+
+
+```
+
+# EOF
+```{r}
+df_diff_all <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+df_diff_all %>% filter(protein == 'Q00534') %>% arrange(pAdj_t)
+
+```

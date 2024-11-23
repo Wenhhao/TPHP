@@ -1,0 +1,363 @@
+---
+title: "locally_enriched_proteins"
+author: ""
+date: '2023-02-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# pacman::p_unload(pacman::p_loaded(), character.only = T)
+# rm(list = ls())
+# gc()
+library(tidyverse)
+library(magrittr)
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/')
+```
+
+ChangeFC == 1.5
+```{r}
+df_dea <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+df_dea[str_detect(df_dea$organ, 'cervi'), 'organ'] <- 'cervix uteri'
+
+
+df_dea %>% filter(abs(log2FC) >= log2(1.5), pAdj_t < 0.05) %>% 
+  select(protein, organ, log2FC, pAdj_t) %>% 
+  rename(target_proteins = protein, tissue_name_col = organ) %>% 
+  rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230531yuel_TPHP_CA_F3_proteins.csv')
+
+
+```
+
+
+
+
+# 0.overlap between dysregulated proteins and normal tissue enriched proteins
+```{r}
+protinfo <- read.csv("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230531yuel_TPHP_CA_F3_proteins.csv", check.names = F)
+protinfo[protinfo$tissue_name_col == 'cervix uteri', 'tissue_name_col'] <- 'uterus'
+protinfo[protinfo$tissue_name_col == 'colon', 'tissue_name_col'] <- 'large intestine'
+protinfo[protinfo$tissue_name_col == 'rectum', 'tissue_name_col'] <- 'large intestine'
+
+
+normal_enrich <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/normal_classification/20231113yuel_TPHP_tissue_enriched1629_group_enriched2627_4057prot.csv')
+normal_enrich %<>% filter(Classification == 'tissue enriched')
+normal_enrich %<>% dplyr::select(tissue_type, UniprotID) %>% setNames(c('tissue_enrich', 'target_proteins'))
+
+x <- normal_enrich$tissue_enrich %>% unique %>% sort
+y <- protinfo$tissue_name_col %>% unique %>% sort
+setdiff(x, y)
+setdiff(y, x) # "lymph node"    "mammary gland" "pancreas"      "penis" 
+
+protinfo <- inner_join(protinfo, normal_enrich, by = 'target_proteins')
+protinfo %<>% filter(!(tissue_name_col %in% c('brain'))) # remove samples of brain which are too few
+protinfo %<>% arrange(tissue_name_col, tissue_enrich)
+protinfo1 <- protinfo %>% filter(tissue_name_col == tissue_enrich)
+protinfo2 <- protinfo %>% filter(tissue_name_col != tissue_enrich)
+View(protinfo2) # manually checked; without missing anything
+
+# 123 proteins
+dim(protinfo1) # 123 5
+protinfo1 %>% rio::export("20231112yuel_TPHP_CA_F3_proteins_normal_enriched_overlap.csv")
+
+# fileName <- list.files(pattern = '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$')
+# organ <- str_extract(fileName, '05p_.+\\.xlsx') %>%
+#   str_replace('05p_', '') %>% str_replace('\\.xlsx', '')
+# organ[2] == 'cervix uteri' # FALSE
+# organ[2] <- 'cervix uteri'
+# # data <- lapply(fileName, function(e) readxl::read_xlsx(str_c(path, e, sep = '/'), sheet = 1))
+# data <- lapply(fileName, readxl::read_xlsx, sheet = 1)
+# names(data) <- organ
+# up <- plyr::ldply(data, .id = 'organ')
+# local_en_up <- up %>% filter(prot %in% protinfo1$target_proteins) %>% pull(prot)
+# # "O96009" "P19544" "P54277"
+# protinfo1 %>% filter(target_proteins %in% local_en_up)
+
+```
+
+
+
+# 1.carcinoma_specific_dysregulated & normal_unique
+## 1.1 cancer specific (upregulated) and normal tissue enriched proteins
+```{r}
+# locally enriched proteins
+# df_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318yuel_TPHP_CA_F3_proteins_normal_enriched_overlap.csv')
+# df_prot$target_proteins
+# df_prot$tissue_name_col
+# dim(df_prot) # 15 3
+protinfo1 <- rio::import("20231112yuel_TPHP_CA_F3_proteins_normal_enriched_overlap.csv")
+# fileName <- list.files(pattern = '^20230318_CA_ADJ_volcanoplot.*\\.xlsx$')
+# organ <- str_extract(fileName, '05p_.+\\.xlsx') %>%
+#   str_replace('05p_', '') %>% str_replace('\\.xlsx', '')
+# organ[2] == 'cervix uteri' # FALSE
+# organ[2] <- 'cervix uteri'
+# data <- lapply(fileName, readxl::read_xlsx, sheet = 1)
+# names(data) <- organ
+# up <- plyr::ldply(data, .id = 'organ')
+# local_en_up <- up %>% filter(prot %in% protinfo1$target_proteins) %>% pull(prot)
+# # "O96009" "P19544" "P54277"
+# protinfo <- protinfo1 %>% filter(target_proteins %in% local_en_up)
+# protinfo$target_proteins
+
+
+protinfo <- protinfo1
+
+# read CA and normal data
+df_CA <- read.csv('//172.16.13.136/share/members/yuel/2022/tables/20230318_PUH_submatrix_combine_5_missing.csv', check.names = F) # CA combine 50 missing submatrice
+dim(df_CA) # 998 10738
+colnames(df_CA)[1:7]
+# [1] "DIA_ID"                    "sample_type"              
+# [3] "tissue_name"               "patient_ID"               
+# [5] "anatomical_classification" "organ" 
+# pm <- apply(df_CA[,-c(1:6)],c(1,2),as.numeric)
+# # min(pm,na.rm = T) # 299.2795
+# # max(pm,na.rm=T) # 23282619
+# pm[is.na(pm)] <- min(pm, na.rm = T) * 0.5
+# df[,-c(1:6)] <- pm
+df_CA[grep("SCA_149",df_CA$DIA_ID), 'patient_ID']<-"770666-2"
+df_CA[grep("SCA_150",df_CA$DIA_ID), 'patient_ID']<-"770666-2"
+df_CA[grep("SCA_1$",df_CA$DIA_ID), 'patient_ID']<-"811335-2"
+df_CA[grep("SCA_2$",df_CA$DIA_ID), 'patient_ID']<-"811335-2"
+
+
+df<-readxl::read_xlsx("//172.16.13.136/share/members/yuel/2022/tables/20220719_rm_randomNA_normal.xlsx")
+ai<-readxl::read_xlsx("//172.16.13.136/share/members/yuel/2022/tables/1_202207TPHP_1781file_info_edited_v4.xlsx")
+di<-inner_join(ai,df[,c(1,16:ncol(df))],by="FileName")
+table(di$patient_ID)
+df0<-di[which(di$patient_ID %in% c("1","2","3","4","7","JD-1","JD-2","JD-3","JD-4")),]
+dim(df0) # 497 12410
+colnames(df0)[1:19]
+pm1<-apply(df0[,-c(1:18)],c(1,2),as.numeric)
+# # min(pm1,na.rm = T) # 9.795163
+# # max(pm1,na.rm=T) # 24.00716
+pm1 <- 2 ^ pm1 # log2 -> raw scale
+# pm1[is.na(pm1)] <- min(pm1, na.rm = T) * 0.5
+df0[,-c(1:18)] <- pm1
+df_N <- df0 %>%
+  select(DIA_ID, sample_type, tissue_name, patient_ID, anatomical_classification, DDA_lib_type, 19:ncol(df0)) %>%
+  rename(organ = DDA_lib_type)
+
+
+# combine CA and N
+df <- full_join(df_CA, df_N)
+dim(df) # 1495 12530
+length(unique(c(colnames(df_CA), colnames(df_N)))) # 12530
+
+
+rio::export(df, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/PUH_CAN_merge_matrix_for_locally_enriched_20231112.xlsx')
+
+
+
+```
+
+
+## 1.2 locally enriched
+```{r}
+#get abbreviations
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+
+
+# read data
+protinfo
+protinfo$tissue_name_col %<>% sapply(function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+protinfo$tissue_enrich %<>% sapply(function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+
+# add gene name
+# uni_entr <- clusterProfiler::bitr(protinfo$target_proteins,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% setNames(c('UniprotID', 'target_genes'))
+df_uniprot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/drug/uniprot/uniprot-download_true_fields_accession_2Cid_2Cprotein_name_2Cgene_na-2022.09.21-14.18.23.22.xlsx')
+df_uniprot %<>% mutate(target_genes = str_replace(`Entry Name`, '_HUMAN$', '')) %>% select(Entry, target_genes) %>% rename(UniprotID = Entry)
+protinfo <- dplyr::right_join(df_uniprot, protinfo, by = c('UniprotID' = 'target_proteins'))
+
+# # match log2FC and pAdj
+# df_dea <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+# df_dea$organ %<>% sapply(function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+# protinfo %<>% left_join(df_dea, by = c('UniprotID' = 'protein', 'tissue_name_col' = 'organ'))
+protinfo %<>% #rename(UniprotID = target_proteins) %>%
+  select(UniprotID:log2FC, pAdj_t) %>% rename(pAdj = pAdj_t) # 
+
+
+# prepare data
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/PUH_CAN_merge_matrix_for_locally_enriched_20231112.xlsx', col_types = c(rep('guess', 6), rep('numeric', 12524)), na = '')
+df[df$sample_type == 'Normal', 'organ'] <- df$anatomical_classification[df$sample_type == 'Normal']
+df[str_detect(df$organ, 'cervix'), 'organ'] <- 'cervix_uteri'
+df$organ <- sapply(df$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+dim(df) # 1495 12530
+colnames(df)[1:7]
+pm <- df %>% select(-(1:6))
+pm[is.na(pm)] <- min(pm, na.rm = T) * 0.5 # raw scale
+pmlog10 <- log10(pm)
+
+dflog10 <- df
+dflog10[, -(1:6)] <- pmlog10
+
+
+# locally enriched
+df_expr <- dflog10 %>%
+  select(organ, sample_type, tissue_name, patient_ID, all_of(protinfo$UniprotID)) %>%
+  rename(cancer_type = sample_type)
+df_expr[df_expr$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+df_expr[df_expr$cancer_type == 'Normal', 'cancer_type'] <- 'N'
+
+types_CA <- df_expr %>% filter(cancer_type != 'N') %>% pull(organ)
+types_N <- df_expr %>% filter(cancer_type == 'N') %>% pull(organ)
+setdiff(types_CA, types_N) # "CO"  "CU"  "PEN" "REC"
+# df_expr[df_expr$organ == 'LAI', ] # CO/REC
+# df_expr[df_expr$organ == 'UTE' & df_expr$cancer_type == 'N', ] # UTE/CU
+df_expr[df_expr$organ == 'CU', 'organ'] <- 'UTE'
+df_expr[df_expr$organ %in% c('CO', 'REC'), 'organ'] <- 'LAI'
+
+
+
+# boxplot
+plots <- list()
+for(i in 1:nrow(protinfo)){
+  # anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)}, pAdj={signif(protinfo$pAdj[i], 3)}")
+  anno_txt <- sprintf("%1.2e", protinfo$pAdj[i])
+  df <- df_expr %>% select(organ, cancer_type, patient_ID, all_of(protinfo$UniprotID[i]))
+  plots[[i]] <- my_plot_CAN_boxviolin(df, organ = protinfo$tissue_name_col[i], na_cutoff = 1, refer = 'local', anno_txt = anno_txt)
+}
+# p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+# ggsave('PUH_locally_enriched_upregulated_boxplot_20231112.pdf', p, width = 210 / 3, height = 297 / 6, units = "mm")
+
+pdf('PUH_locally_enriched_upregulated_boxplot_20231112.pdf', width = 21, height = 29.7 / 10)
+for(i in seq_along(plots)) print(plots[[i]]$p)
+graphics.off()
+
+
+
+# normal only
+plots <- list()
+for(i in 1:nrow(protinfo)){
+  # anno_txt <- sprintf("%1.2e", protinfo$pAdj[i])
+  df <- df_expr %>%
+    select(organ, cancer_type, patient_ID, all_of(protinfo$UniprotID[i])) %>%
+    filter(cancer_type == 'N')
+  plots[[i]] <- my_plot_N_boxviolin(df, organ = protinfo$tissue_name_col[i], na_cutoff = 1, refer = 'local', anno_txt = NULL)
+}
+# p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+# ggsave('PUH_locally_enriched_upregulated_N_boxplot_20231112.pdf', p, width = 210 * 2, height = 297, units = "mm")
+pdf('PUH_locally_enriched_upregulated_N_boxplot_20231112.pdf', width = 21, height = 29.7 / 10)
+for(i in seq_along(plots)) print(plots[[i]]$p)
+graphics.off()
+
+# C/Adj only
+plots <- list()
+for(i in 1:nrow(protinfo)){
+  anno_txt <- sprintf("%1.2e", protinfo$pAdj[i])
+  df <- df_expr %>%
+    select(organ, cancer_type, patient_ID, all_of(protinfo$UniprotID[i])) %>%
+    filter(cancer_type != 'N')
+  plots[[i]] <- my_plot_CA_boxviolin(df, organ = protinfo$tissue_name_col[i], na_cutoff = 1, refer = 'uniprot', anno_txt = anno_txt)
+}
+# p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+# ggsave('PUH_locally_enriched_upregulated_CA_boxplot_20230531.pdf', p, width = 210 * 2, height = 297 / 2, units = "mm")
+
+pdf('PUH_locally_enriched_upregulated_CA_boxplot_20231112.pdf', width = 21, height = 29.7 / 10)
+par(mfrow = c(1, 1))
+for(i in seq_along(plots)){
+  print(plots[[i]]$p)
+}
+graphics.off()
+
+
+
+# write tables
+df_expr_output <- df_expr
+pm_output <- df_expr_output[, -(1:4)]
+pm_output[pm_output == min(pm_output)] <- NA
+df_expr_output[, -(1:4)] <- pm_output
+list(log10 = df_expr_output, log10_fillna = df_expr) %>%
+  rio::export('PUH_locally_enriched_upregulated_boxplot_20231112.xlsx')
+protinfo %>% rio::export('20231112yuel_TPHP_CA_F3_proteins_normal_enriched_overlap_.csv')
+```
+
+
+## 1.3 table
+```{r}
+## table of result
+df_prot <- rio::import('20231112yuel_TPHP_CA_F3_proteins_normal_enriched_overlap_.csv') # 55 locally enriched proteins
+
+
+# ------ get top 2 enriched proteins ---------
+# normal classification median matrix
+pm2 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/normal_classification/20231113TPHP_normal_tissue_organ_median.xlsx')
+pm2 %<>% rename(anatomical_classification = 'Group.1')
+
+# map to abbreviation
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+pm2$anatomical_classification %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+
+pm_rlt <- pm2 %>% select(all_of(df_prot$UniprotID)) 
+rownames(pm_rlt) <- pm2$anatomical_classification
+df_rlt <- apply(pm_rlt, 2, function(y){
+  y_sorted <- sort(y, decreasing = T)
+  y_top2 <- c(y_sorted[1], y_sorted[2])
+  data.frame(`First enriched tissue` = names(y_top2)[1],
+             `First enriched tissue median (log2)` = log2(y_top2[1]),
+             `Second enriched tissue` = names(y_top2)[2],
+             `Second enriched tissue median (log2)` = log2(y_top2[2]),
+              check.names = F
+             )
+}, simplify = F) %>%
+  plyr::ldply(.id = 'UNIPROT')
+
+
+# clusterProfiler::bitr(df_prot$UniprotID, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T)
+
+
+
+dfprot <- rio::import('//172.16.13.136/TPHP/TPL/libs/20220616_fraglib/protein.tsv')
+prot2gene <- dfprot$Gene
+names(prot2gene) <- dfprot$`Protein ID`
+genes <- prot2gene[as.character(df_rlt$UNIPROT)]
+df_rlt %<>% add_column(SYMBOL = genes, .after = 'UNIPROT')
+
+df_rlt$`First/Second median` <- df_rlt$`First enriched tissue median` / df_rlt$`Second enriched tissue median`
+
+df_rlt$`First enriched tissue` %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+}) %>% str_c(., ' (', names(.), ')')
+df_rlt$`Second enriched tissue` %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+}) %>% str_c(., ' (', names(.), ')')
+
+
+# ------ add DEP results ---------
+# # read DEP data
+# xlsx_vec <- list.files('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr',
+#                        pattern = '^20230116_CA_ADJ.*\\.xlsx$', full.names = T)
+# name1_ls <- lapply(xlsx_vec, function(xlsx){
+#     df1 <- readxl::read_excel(xlsx, sheet = 'up')
+#     df2 <- readxl::read_excel(xlsx, sheet = 'down')
+#     ret <- rbind(df1, df2)
+#     return(ret)
+# })
+# names(name1_ls) <- str_extract(xlsx_vec, '0\\.05p.+\\.xlsx$') %>%
+#     str_replace('^0\\.05p_', '') %>%
+#     str_replace('\\.xlsx$', '')
+# df_DEP <- plyr::ldply(name1_ls, .id = 'organ') %>% rename(log2fc = fc, p_adj = p_value)
+
+# df_DEA <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230116_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+df_DEP <- df_prot %>%
+  rename(UNIPROT = UniprotID,
+         organ = tissue_name_col,
+         `Carcinoma/adjacent fold change (log2)` = log2FC,
+         `BH Adjusted P value (paired t-test)` = pAdj)
+df_rlt %<>% inner_join(df_DEP)
+
+df_rlt %<>% mutate_if(is.numeric, function(x) sprintf('%.2e', x))
+rio::export(df_rlt, 'TPHP_locally_enriched_121prots.xlsx')
+
+
+
+```
+

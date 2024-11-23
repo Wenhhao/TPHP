@@ -1,0 +1,4260 @@
+---
+title: "TPHP_DIA_QC_20230705"
+author: ""
+date: "2023-07-05"
+output: html_document
+---
+
+# setup
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+# pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+# rm(list = ls())
+# gc()
+library(tidyverse)
+library(magrittr)
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+
+get_random_colors <- function(n, from_color_palette = brewer.pal(8, "Set2")){
+  my_colors <- sample(from_color_palette, 1)
+  i <- 1
+  while(length(my_colors) < n){
+    color <- sample(from_color_palette, 1)
+    if(color != my_colors[i]){
+      my_colors[i+1] <- color
+      i <- i + 1
+    }
+  }
+  return(my_colors)
+}
+
+info_of_pm <- function(pm){
+  info <- data.frame(Filename = colnames(pm))
+  info$instrument <- as.character(stringr::str_extract(colnames(pm), '^[A-Z]+'))
+  info$date <- as.character(stringr::str_extract(colnames(pm), '[0-9]+')) %>% factor(., levels = unique(sort(.)), ordered = T)
+  info$year <- stringr::str_sub(info$date, end = 4)
+  info$month <- stringr::str_sub(info$date, end = -3)
+  
+  info$batch <- NA
+  info$batch[grep("M202006|K202006|K202007|M202007|K202008|M202008|N202008", info$Filename)] <- 'b1'
+  info$batch[grep("N202011", info$Filename)] <- 'b2'
+  info$batch[grep("M202101", info$Filename)] <- 'b3'
+  info$batch[grep("N202104", info$Filename)] <- 'b4'
+  info$batch[grep("N202105|N202106", info$Filename)] <- 'b5'
+  info$batch[is.na(info$batch)] <- 'b6'
+  
+  info$trans <- NA
+  info$trans[grep("b1|b2", info$batch)] <- "T1"
+  info$trans[grep("b3|b4", info$batch)] <- "T2"
+  info$trans[grep("b5", info$batch)] <- "T3"
+  info$trans[grep("b6", info$batch)] <- "T4"
+  info$trans[grep("^N202203", info$Filename)] <- "T5"
+  
+  info$new <- ifelse(grepl('^2022', info$month), 'new', 'old')
+  return(info)
+}
+
+
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC')
+
+```
+
+
+# preparation
+```{r}
+require(tidyverse)
+require(magrittr)
+
+# setwd('Z:/members/jiangwenhao/to_yl')
+df <- readxl::read_excel('Z:/members/jiangwenhao/to_yl/20220701TPHP_1783file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
+df %>% select(-(1:21)) %>% min(na.rm = T) # 37.4647
+
+# edit cancer_type
+df %>% count(cancer_type)
+SCA_add <- df %>%
+  filter(is.na(cancer_type), str_detect(FileName, 'SCA'), !str_detect(FileName, 'pool')) %>%
+  pull(FileName)
+df[df$FileName %in% SCA_add, 'cancer_type'] <- 'SCA'
+df %>% count(cancer_type)
+
+SN_add <- df %>%
+  filter(is.na(cancer_type), str_detect(FileName, 'SN'), !str_detect(FileName, 'pool')) %>%
+  pull(FileName)
+df[df$FileName %in% SN_add, 'cancer_type'] <- 'SN'
+df %>% count(cancer_type) # 117 pool marked NA
+
+
+# df_info_edit0 <- readxl::read_excel('20220701TPHP_1783file_info_edited.xlsx')
+# df_info_edit0 %>% count(tissue_type)
+# df_info_edit0 %>% count(DDA_lib_type)
+# 
+# tislibtype <- read.csv('tissueType_to_DDAlibType.csv', header = T, row.names = 'X')
+# ht_tis_lib <- tislibtype$DDA_lib_type
+# names(ht_tis_lib) <- tislibtype$tissue_type
+# alter_libtype <- ht_tis_lib[df_info_edit0$tissue_type] %>% unname()
+# df_info_edit0$DDA_lib_type <- ifelse(is.na(df_info_edit0$DDA_lib_type), alter_libtype, df_info_edit0$DDA_lib_type)
+# df_info_edit0 %>% count(DDA_lib_type) # 366 NA
+# df_info_edit0 %>% filter(is.na(DDA_lib_type))
+
+
+df_info_edit <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+df_info_edit <- data.frame(FileName = df$FileName) %>% full_join(df_info_edit, ., by = 'FileName')
+df_info_edit$tissue_type <- df_info_edit$anatomical_classification
+df_info_edit %>% count(tissue_type)
+df_info_edit %>% count(DDA_lib_type)
+
+
+```
+
+
+# CA and SCA
+```{r}
+# CA and SCA --------------------------------------------------------------
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+
+df_C <- df %>% filter(cancer_type %in% c('SCA', 'carcinoma', 'adjacent'))
+# df_info <- df_C %>% select(1:21)
+pm <- df_C %>% select(-(1:21)) %>% t() %>% as.data.frame()
+colnames(pm) <- df_C$FileName
+
+dim(pm) # 13479  1108
+pm %<>% removeColsAllNa() %>% removeRowsAllNa()
+dim(pm) # 13393  1108
+write.csv(pm,"TPHP_CA-SCA_pm_20220704.csv", quote = F, na = '') 
+
+pm_qu<-preprocessCore::normalize.quantiles(as.matrix(pm),copy=TRUE) %>% as.data.frame()
+dim(pm_qu)
+head(colnames(pm_qu))
+head(rownames(pm_qu))
+colnames(pm_qu)<-colnames(pm)
+rownames(pm_qu)<-rownames(pm)
+
+write.csv(pm_qu,"TPHP_CA-SCA_pm_quan_20220704.csv", quote = F, na = '') 
+
+# Add pool
+pool_match <- function(file_vec, file_prefix){
+  selected <- sapply(file_vec, function(e){
+    matched <- F
+    for(pre in file_prefix){
+      if(str_detect(e, pre)){
+        matched <- T
+        break
+      }
+    }
+    return(matched)
+  })
+  selected[selected] %>% names
+}
+
+# df_info_edit %>% count(cancer_type)
+file_prefix <- df_info_edit %>% pull(FileName) %>% str_extract('^[A-Z]+\\d+') %>% unique %>% sort
+pool_C <- df %>% filter(str_detect(FileName, 'pool')) %>% pull(FileName) %>%
+  pool_match(file_prefix)
+df_pool <- df %>% filter(FileName %in% pool_C)
+df_C <- rbind(df_C, df_pool)
+
+df_info <- df_C %>% select(1:21)
+pm <- df_C %>% select(-(1:21)) %>% t() %>% as.data.frame()
+colnames(pm) <- df_C$FileName
+
+
+dim(pm) # 13479  1169
+pm %<>% removeColsAllNa() %>% removeRowsAllNa()
+dim(pm) # 13396  1169
+write.csv(pm,"TPHP_CA-SCA-pool_pm_20220704.csv", quote = F, na = '') 
+
+pm_qu<-preprocessCore::normalize.quantiles(as.matrix(pm),copy=TRUE) %>% as.data.frame()
+dim(pm_qu)
+head(colnames(pm_qu))
+head(rownames(pm_qu))
+colnames(pm_qu)<-colnames(pm)
+rownames(pm_qu)<-rownames(pm)
+
+write.csv(pm_qu,"TPHP_CA-SCA-pool_pm_quan_20220704.csv", quote = F, na = '') 
+
+```
+
+
+## All
+```{r}
+pm_qu <- read.csv('TPHP_CA-SCA-pool_pm_qu_log2_limma_20220705.csv', check.names = F)
+rownames(pm_qu) <- pm_qu[, 1]
+pm_qu[, 1] <- NULL
+
+prot_num <- apply(pm_qu, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 1305 6398 7659 8428 9505 
+
+#missing
+ge.na.ratio(pm_qu) # 0.4530719
+df_new <- pm_qu[apply(pm_qu, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.1740233
+
+
+info <- info_of_pm(df_new)
+df_info_edit %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info_edit) # 1169
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info %<>% left_join(df_info_edit, by = c('Filename' = 'FileName'))
+# info$tissue_type <- df_info_edit$tissue_type
+# info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+tissue_tab <- data.frame(label = factor(info$tissue_type),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_PCA_row_date.pdf', p$plot, width = 18, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+# 
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_batch.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_date.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_month.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_ins.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_trans.pdf', p$plot, width = 14, height = 14)
+# 
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+
+```
+
+
+
+
+## pool
+```{r}
+pool <- pm_qu %>% as.data.frame() %>%
+  select(contains('pool'))
+pool %<>% removeRowsAllNa()
+dim(pool) # 10052    61
+
+prot_num <- apply(pool, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 5553 5981 6101 6452 7118 
+
+pool1 <- pool
+df_bar <- pool1 %>%
+  summarize_each(function(x) sum(!is.na(x))) %>%
+  t %>%
+  as.data.frame() %>%
+  rownames_to_column('filename') %>%
+  rename(prot_num = V1) %>%
+  mutate(
+    date = str_extract(filename, '[0-9]{8,9}'),
+    xlab = str_c(str_extract(filename, '^[A-Z]+[0-9]+'), str_extract(filename, '[0-9]+\\.d'), sep = '_') %>% str_replace('\\.d', '')
+  ) %>%
+  arrange(date)
+
+par(mar=c(10, 4.1, 4.1, 2.1))
+barplot(df_bar$prot_num, names.arg = df_bar$xlab, las=2)
+
+
+#missing
+ge.na.ratio(pool1) # return 0.381764
+df_new <- pool1[apply(pool1, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new)# return 0.08794885
+
+
+#correlation
+library(corrplot)
+new_cors <- cor(log2(df_new),use = "pairwise.complete.obs")
+uptri_pool <- new_cors[upper.tri(new_cors)]
+median(uptri_pool) # 0.9719685
+min(uptri_pool) # 0.9450006
+pdf('20230707TPHP_DIA_SCA_CA_onlypool_log2_pearson_cor.pdf', width = 14, height = 14)
+corrplot(new_cors, order ="AOE", type = "upper", diag = F, tl.pos = 'n', cl.cex = 2, col.lim = c(0.93, 1.0))
+graphics.off()
+
+# canvasXpress(data=df_new,
+#              correlationAxis="samples",
+#              graphType="Correlation",
+#              showTransition=FALSE,
+#              title="Correlation Plot",
+#              correlationType ="diamond") 
+
+
+# protein cv
+library(ggplot2)
+pool1_cv <- apply(2 ^ df_new, 1, function(x){sd(x, na.rm = T)/mean(x, na.rm = T)})
+df_new_cv <- data.frame(protein= rownames(df_new), cv = pool1_cv)
+median(pool1_cv, na.rm = T) #median cv=0.1888758
+
+dim(df_new_cv) # 6361    2
+
+pdf('20230707TPHP_DIA_SCA_CA_onlypool_CV.pdf',width = 3.6, height = 3.6)
+plot(density(na.omit(unlist(df_new_cv$cv))), main = 'Pool1 QC', mgp = c(2, 0.7, 0), cex.lab = 0.9, xlab = 'CV')
+graphics.off()
+
+#vio
+df_new_vio <- data.frame(CV=pool1_cv, Type="pool")
+med <- median(df_new_vio$CV) # 0.1888758
+p <- ggplot(df_new_vio, aes(x = Type, y = CV, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'pool', y = max(na.omit(df_new_vio$CV)) * 1.05, label = paste0('Median of pool: ', sprintf('%.3f', med), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_CV_violin.pdf', p, width = 6, height = 6)
+
+#cv scatter plot
+pro_mean<-apply(2 ^ df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$rank<-pro_mean
+p <- ggplot(df_new_cv, aes(x = log10(rank), y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed") +
+  labs(x = 'log10Intensity', y = 'Coefficient of Variation')
+pdf('20230707TPHP_DIA_SCA_CA_onlypool_CV_scatter.pdf',width = 6, height = 6)
+print(p)
+my.dev.off()
+
+
+# ------ PCA and UMAP ------
+info <- info_of_pm(df_new)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_PCA_row_date.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+# # p <- myPCA(log2(df_new), tissue_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# # ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_row_tissue.pdf', p$plot, width = 14, height = 14)
+# 
+# 
+# 
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_batch.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_date.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_month.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_ins.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_trans.pdf', p$plot, width = 14, height = 14)
+# 
+# # p <- myPCA(log2(df_new), tissue_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# # ggsave('20220704TPHP_DIA_SCA_CA_onlypool_PCA_col_tissue.pdf', p$plot, width = 14, height = 14)
+# 
+# 
+# 
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# 
+
+```
+
+
+```{r}
+pro_mean<-apply(df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$prot_mean<-pro_mean
+df_new_cv %<>% arrange(desc(prot_mean))
+df_new_cv$rank <- seq_along(df_new_cv$prot_mean)
+
+p <- ggplot(df_new_cv, aes(x = rank, y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed") +
+  labs(x = 'Rank', y = 'Coefficient of Variation')
+ggsave('20230707TPHP_DIA_SCA_CA_onlypool_CV_scatter_rank.pdf', p,width = 6, height = 6)
+
+```
+
+
+## replicates
+```{r}
+pm_qu <- 2 ^ pm_qu
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+
+df1 <- pm_qu %>% t() %>% as.data.frame() %>% rownames_to_column('FileName') %>%
+  right_join(df_info, ., by = 'FileName')
+
+info <- df1 %>% select(1:21)
+
+# get rep tags
+info <- info[, c('FileName', 'DIA_ID', 'Rep')]
+reps <- unique(na.omit(info$Rep))
+info %<>% dplyr::filter((`Rep` %in% reps) | (`DIA_ID` %in% reps))
+info[is.na(info$Rep), 'Rep'] <- info[is.na(info$Rep), 'DIA_ID']
+rep_id <- unique(info$Rep)
+
+df2 <- info %>% # with rep
+  filter(Rep %in% rep_id)
+df2$DIA_ID <- df2$Rep
+
+max_nrep <- info %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted); not mind warnings
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+df2 %<>% left_join(select(df1, -c('DIA_ID', 'Rep')), by = 'FileName')
+
+
+rep_id <- df2 %>% # rep_id (sorted)
+  count(DIA_ID) %>%
+  arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+'))) %>%
+  filter(n > 1) %>%
+  pull(DIA_ID)
+
+
+df2 <- df2 %>% # with rep
+  filter(DIA_ID %in% rep_id)
+
+df2 %<>% arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+')))
+df2$FileName %<>% factor(levels = unique(.), ordered = T)
+df2$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+max_nrep <- df2 %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted)
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+```
+
+
+
+### barplot
+```{r}
+library(ggplot2)
+
+pm <- df2 %>% select(-(1:21)) %>% t %>% as.data.frame
+colnames(pm) <- df2$FileName
+Protein <- apply(pm, 2, function(col) sum(!is.na(col)))
+
+df_bar <- df2 %>%
+  select(FileName, DIA_ID) %>%
+  add_column(Protein = apply(pm, 2, function(col) sum(!is.na(col))),
+             .before = 3)
+df_bar$FileName %<>% factor(levels = unique(.), ordered = T)
+df_bar$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+df_bar2 <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  dplyr::mutate(Rep = str_c('rep', 1:n()))
+
+get_random_colors <- function(n, from_color_palette = brewer.pal(8, "Set2")){
+  my_colors <- sample(from_color_palette, 1)
+  i <- 1
+  while(length(my_colors) < n){
+    color <- sample(from_color_palette, 1)
+    if(color != my_colors[i]){
+      my_colors[i+1] <- color
+      i <- i + 1
+    }
+  }
+  return(my_colors)
+}
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = DIA_ID, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()
+ggsave('TPHP_DIA_CA-SCA_qu_limma_rep_barplot_20230707.pdf', p, width = 15, height = 10)
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = FileName, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  geom_text(aes(label = df_bar2$Protein), # set the second columns as label of numbers
+            size = 3, hjust = 0.5, vjust = 0, position = "stack", color = 'black')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()# + theme(legend.position='none')
+ggsave('TPHP_DIA_CA-SCA_qu_limma_rep_barplot_byfilename_20230707.pdf', p, width = 15, height = 25)
+
+
+df_bar3 <- df_bar2 %>%
+  pivot_wider('Rep', names_from = 'DIA_ID', values_from = 'Protein') %>%
+  mutate_if(is.numeric, sort, na.last = T)
+
+mat_bar3 <- df_bar3 %>% column_to_rownames('Rep')
+for(i in nrow(mat_bar3):2){
+  mat_bar3[i , ] <- ifelse(is.na(mat_bar3[i, ] - mat_bar3[i-1, ]), 0, mat_bar3[i, ] - mat_bar3[i-1, ]) %>% unlist
+}
+mat_bar3 <- mat_bar3[nrow(mat_bar3):1, ]
+mat_bar3[mat_bar3 == 0] <- NA
+
+df_bar4 <- mat_bar3 %>% rownames_to_column('Rep')
+long_data <- pivot_longer(df_bar4, -Rep, names_to = "DIA_ID", values_to = "Protein")
+long_data$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+long_data$Rep %<>% factor(levels = unique(.), ordered = T)
+
+p <- ggplot(data=long_data, mapping=aes(x=DIA_ID, y=Protein, fill=Rep))+
+  geom_bar(stat="identity",width=0.5,position='stack')+
+  # scale_fill_manual(values=colorRampPalette(c('#FFB6C1', '#ADD8E6'))(3))+
+  scale_fill_brewer(palette = "Spectral", direction = 1)+
+  # scale_fill_manual(values = my_colors[1:nrow(mat_bar3)])+
+  # scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  # coord_flip() +
+  ggthemes::theme_base()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+ggsave('TPHP_DIA_CA-SCA_qu_limma_rep_barplot_stack_20230707.pdf', p, width = 15, height = 8)
+
+
+# max - min
+df_diff_prot <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  summarise(`max-min` = max(Protein) - min(Protein))
+
+df_diff_prot %>% arrange(desc(`max-min`))
+
+```
+
+
+
+###violinplot
+```{r}
+my_vios <- function(df_vios, ylim = NULL, flip = F){
+  meds <- na.omit(df_vios$CV)
+  median(meds, na.rm = T) # 0.1281786
+  # fivenum(meds) # 0.0000035079 0.0515402367 0.1281785918 0.2848757979 1.4121620499
+  
+  p <- ggplot(df_vios, aes(x = ID, y = CV, fill = ID))+
+    geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+    geom_violin(aes(fill = ID, color = ID)) +
+    geom_boxplot(aes(fill = ID), width=0.1, color = '#000000') +
+    stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+    labs(y = "Coefficient of Variation") +
+    theme(legend.position='none',
+          #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+          #legend.title = element_text(size=20,color="black"),
+          panel.grid.major =element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_line(colour = "black"))+
+    theme(panel.grid =element_blank())+
+    theme(axis.text = element_text(size = 20,color = "black"))+
+    #theme(axis.text.x = element_text(angle = 90))+
+    theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+    theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+    theme(axis.title.x=element_blank())+
+    theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+    #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+    # scale_fill_brewer(palette = "Set2")
+    # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+    # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+    scale_color_manual(values = rep("#FC8D62", length(unique(df_vios$ID)))) +
+    scale_fill_manual(values = rep("#FC8D62", length(unique(df_vios$ID))))
+  if (flip){
+    p <- p + labs(
+      #title = "",
+      #subtitle = "",
+      # caption = "",
+      # tag = "",
+      x = "Coefficient of Variation")
+  }
+  else{
+    p <- p + labs(
+      y = "Coefficient of Variation")+
+      theme(axis.text.x = element_text(angle = 90))
+  }
+
+  if (flip){
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1.00), y = max(na.omit(df_vios$CV)) * 0.97, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }else{
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1 / 15), y = max(na.omit(df_vios$CV)) * 1.05, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }
+  if (flip)  {p <- p + coord_flip()}
+  if ( !is.null(ylim) ) { p <- p + ylim(ylim[1], ylim[2])}
+  return(p)
+}
+
+cv <- function(x){
+  sd(x, na.rm = T) / mean(x, na.rm = T)
+}
+
+
+
+df_cv <- df2 %>%
+  select(DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+
+# require(plyr)
+df_vios <- plyr::ddply(as.data.frame(df_cv), 'DIA_ID', function(dfsub){
+  data.frame(ID = unique(dfsub$DIA_ID),
+             CV = apply(dfsub[, -1], 2, cv))
+})
+df_vios %<>% drop_na()
+df_vios %<>% arrange(as.numeric(str_extract(ID, '\\d+')))
+df_vios$ID %<>% factor(levels = unique(.), ordered = T)
+p <- my_vios(df_vios)
+ggsave('TPHP_DIA_CA-SCA_qu_limma_rep_violinplot_20230707.pdf', p, width = 16.56, height = 9.768)
+
+
+```
+
+
+### correlation
+```{r}
+library(corrplot)
+# i <- 1
+# df_qc <- df2 %>%
+#   filter(DIA_ID == rep_id[i]) %>%
+#   select(FileName, DIA_ID, 22:12249)
+
+# correlation --------------
+reps <- rep_id
+length(reps) # 24
+df_qc <- df2 %>% select(FileName, DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+df_qc[, -(1:2)] %<>% log2()
+
+uptri_reps <- c()
+cornames <- c()
+pdf('TPHP_DIA_CA-SCA_qu_limma_rep_log2_pearson_20230707.pdf',width = 45,height = 25)
+par(mfrow=c(4, 6))
+for(i in 1:length(reps)){
+  rep <- reps[i]
+  submat <- df_qc %>% dplyr::filter(DIA_ID == reps[i]) %>% dplyr::select(-(1:2)) %>% t %>% as.data.frame %>% drop_na
+  if((ncol(submat) < 2) | (nrow(submat)) <= 0) { next } # jump IDs with only one replicate
+  submat <- submat[apply(submat, 1, function(x){!all(is.na(x)) > 0}), ]
+  if(nrow(submat) == 0) { next } # jump IDs with all NA
+  # remove NA value
+  
+  df_cor <- submat[apply(submat, 1, function(x){!any(is.na(x))}), ]
+  colnames(df_cor) <- paste0(rep(rep, length(df_cor)), '-', seq(1, ncol(df_cor)))
+  new_cors <- cor(df_cor)
+  uptri_rep <- new_cors[upper.tri(new_cors)]
+  uptri_reps <- append(uptri_reps, median(uptri_rep, na.rm = T))
+  cornames[i] <- rep
+  
+  cex.before <- par("cex") 
+  par(cex = 4) 
+  corrplot(corr=cor(df_cor),order="AOE",type="upper", tl.cex = 2/par("cex"), cl.cex = 1/par("cex"))
+  corrplot(corr= cor(df_cor),add=TRUE, type="lower", method="number",order="AOE",diag=FALSE,tl.pos="n", cl.pos="n", tl.cex = 2/par("cex"), cl.cex = 1/par("cex", )
+           #, col="black"
+  )
+  par(cex = cex.before)
+}
+my.dev.off()
+# names(uptri_reps) <- na.omit(cornames)
+median(uptri_reps, na.rm = T) # 0.966533
+quantile(uptri_reps)
+#       0%       25%       50%       75%      100% 
+# 0.9183971 0.9608546 0.9665330 0.9795935 0.9881218
+sort(uptri_reps)
+pdf('TPHP_DIA_CA-SCA_qu_limma_rep_log2_pearson_hist_20230707.pdf',width = 6,height = 4)
+hist(uptri_reps, xlab = '', main = 'Pearson correlation')
+my.dev.off()
+
+
+```
+
+### clustering
+```{r}
+prot_num <- apply(pm_qu, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 1305 6398 7659 8428 9505 
+
+#missing
+ge.na.ratio(pm_qu) # 0.4530719
+df_new <- apply(pm_qu, 1, function(row){
+  nafill <- 0.1 * min(row, na.rm = T)
+  nafill <- ifelse(nafill > 0, nafill, 0)
+  row[is.na(row)] <- nafill
+  return(row)
+}) %>% t() %>% as.data.frame()
+min(df_new) # 22.32865
+
+
+# df_new <- pm_qu[apply(pm_qu, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+# ge.na.ratio(df_new) # 0.1740233
+
+
+
+info <- info_of_pm(df_new)
+# df_info_edit %<>% filter(FileName %in% df_info$FileName)
+# nrow(df_info_edit)
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info$tissue_type <- df_info_edit$tissue_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+
+info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+tissue_tab <- data.frame(label = factor(info$tissue_type),
+                         row.names = info$Filename,
+                         stringsAsFactors = F)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_limma_rmbe_0.1min-eachprot_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_limma_rmbe_0.1min-eachprot_PCA_row_date.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_limma_rmbe_0.1min-eachprot_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_limma_rmbe_0.1min-eachprot_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230707TPHP_DIA_CA_SCA_pool_limma_rmbe_0.1min-eachprot_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+
+```
+
+
+# Normal 
+```{r}
+pm_qu <- rio::import('TPHP_N-pool_pm_qu_log2_20220705.csv') %>% column_to_rownames('V1')
+dim(pm_qu) # 13477   731
+pm_qu %<>% removeRowsAllNa() %>% removeColsAllNa()
+dim(pm_qu) # 13304   731
+
+
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- setdiff(colnames(pm_qu), df_info$FileName)
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm_qu %>% t %>% as.data.frame() %>% rownames_to_column('FileName')
+
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+pm_qu <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+pm_qu <- 2 ^ pm_qu
+colnames(pm_qu) <- df$FileName
+
+```
+
+## All
+```{r}
+prot_num <- apply(pm_qu, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#    0%    25%    50%    75%   100% 
+# 579.0 4378.0 5494.0 6468.5 9173.0 
+
+#missing
+ge.na.ratio(pm_qu) # 0.5984683
+df_new <- pm_qu[apply(pm_qu, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.2486848
+
+
+info <- info_of_pm(df_new)
+df_info %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info) # 731
+# identical(df_info$FileName, df_info$FileName) # must be TRUE
+pool_name <- str_subset(df_info$FileName, 'pool')
+
+info$tissue_type <- df_info$anatomical_classification
+info$DDA_lib_type <- df_info$DDA_lib_type
+
+tissue_tab <- data.frame(label = factor(info$tissue_type),
+                         row.names = info$Filename,
+                         stringsAsFactors = F)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_pool_PCA_row_date.pdf', p$plot, width = 21, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_pool_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_pool_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_pool_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_col_batch.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_col_date.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_col_month.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_col_ins.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220708TPHP_DIA_N_SN_pool_PCA_col_trans.pdf', p$plot, width = 14, height = 14)
+
+
+
+
+
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+
+```
+
+
+## pool
+```{r}
+pool <- pm_qu %>% as.data.frame() %>%
+  select(contains('pool'))
+pool %<>% removeRowsAllNa()
+dim(pool) # 10176    56
+
+prot_num <- apply(pool, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#     0%    25%    50%    75%   100% 
+# 5633.0 6240.5 6345.0 6926.0 7191.0 
+pool1 <- pool
+df_bar <- pool1 %>%
+  summarize_each(function(x) sum(!is.na(x))) %>%
+  t %>%
+  as.data.frame() %>%
+  rownames_to_column('filename') %>%
+  rename(prot_num = V1) %>%
+  mutate(
+    date = str_extract(filename, '[0-9]{8,9}'),
+    xlab = str_c(str_extract(filename, '^[A-Z]+[0-9]+'), str_extract(filename, '[0-9]+\\.d'), sep = '_') %>% str_replace('\\.d', '')
+  ) %>%
+  arrange(date)
+
+par(mar=c(10, 4.1, 4.1, 2.1))
+barplot(df_bar$prot_num, names.arg = df_bar$xlab, las=2)
+
+
+#missing
+ge.na.ratio(pool1) # return 0.3629619
+df_new <- pool1[apply(pool1, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new)# return 0.08692089
+
+
+#correlation
+library(corrplot)
+new_cors <- cor(log2(df_new),use = "pairwise.complete.obs")
+uptri_pool <- new_cors[upper.tri(new_cors)]
+median(uptri_pool) # 0.9748746
+min(uptri_pool) # 0.9522634
+pdf('20230708TPHP_DIA_N_SN_onlypool_log2_pearson_cor.pdf', width = 14, height = 14)
+corrplot(new_cors, order ="AOE", type = "upper", diag = F, tl.pos = 'n', cl.cex = 2, col.lim = c(0.95, 1.0))
+graphics.off()
+
+# canvasXpress(data=df_new,
+#              correlationAxis="samples",
+#              graphType="Correlation",
+#              showTransition=FALSE,
+#              title="Correlation Plot",
+#              correlationType ="diamond") 
+
+
+# protein cv
+library(ggplot2)
+pool1_cv <- apply(df_new, 1, function(x){sd(x, na.rm = T)/mean(x, na.rm = T)})
+df_new_cv <- data.frame(protein= rownames(df_new), cv = pool1_cv)
+median(pool1_cv, na.rm = T) #median cv=0.1864446
+
+dim(df_new_cv) # 6645    2
+length(which(df_new_cv$cv<0.2)) #3669 proteins
+length(which(df_new_cv$cv<0.3)) #5427 proteins
+
+length(which(df_new_cv$cv<0.2))/nrow(df_new_cv) #0.5521445 proteins
+length(which(df_new_cv$cv<0.3))/nrow(df_new_cv) #0.8167043 proteins
+
+pdf('20230708TPHP_DIA_N_SN_onlypool_CV.pdf',width = 3.6, height = 3.6)
+plot(density(na.omit(unlist(df_new_cv$cv))), main = 'Pool QC', mgp = c(2, 0.7, 0), cex.lab = 0.9, xlab = 'CV')
+graphics.off()
+
+#vio
+df_new_vio <- data.frame(CV=pool1_cv, Type="pool")
+med <- median(df_new_vio$CV) # 0.1864446
+p <- ggplot(df_new_vio, aes(x = Type, y = CV, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'pool', y = max(na.omit(df_new_vio$CV)) * 1.05, label = paste0('Median of pool: ', sprintf('%.3f', med), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230708TPHP_DIA_N_SN_onlypool_CV_violin.pdf',p,width = 6, height = 6)
+
+
+#cv scatter plot
+# pro_mean<-apply(df_new, 1, function(v){mean(v, na.rm = T)})
+# df_new_cv$rank<-pro_mean
+# p <- ggplot(df_new_cv, aes(x = rank, y = cv))+geom_point()+
+#   geom_hline(aes(yintercept=0.3), color="red",linetype="dashed")
+# pdf('20220708TPHP_DIA_N_SN_onlypool_CV_scatter.pdf',width = 6, height = 6)
+# print(p)
+# my.dev.off()
+pro_mean<-apply(df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$prot_mean<-pro_mean
+df_new_cv %<>% arrange(desc(prot_mean))
+df_new_cv$rank <- seq_along(df_new_cv$prot_mean)
+
+p <- ggplot(df_new_cv, aes(x = rank, y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed")
+pdf('20230708TPHP_DIA_N_SN_onlypool_CV_scatter.pdf',width = 6, height = 6)
+print(p)
+graphics.off()
+
+
+# ------ PCA and UMAP ------
+info <- info_of_pm(df_new)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_onlypool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_onlypool_PCA_row_date.pdf', p$plot, width = 18, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_onlypool_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_onlypool_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_N_SN_onlypool_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), tissue_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_row_tissue.pdf', p$plot, width = 14, height = 14)
+
+
+
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_batch.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_date.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_month.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_ins.pdf', p$plot, width = 14, height = 14)
+
+# p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_trans.pdf', p$plot, width = 14, height = 14)
+
+# # p <- myPCA(log2(df_new), tissue_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# # ggsave('20220708TPHP_DIA_N_SN_onlypool_PCA_col_tissue.pdf', p$plot, width = 14, height = 14)
+
+
+
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+
+
+
+
+
+
+```
+
+
+# =====================================
+# CA-SCA-Normal
+```{r}
+# df <- readxl::read_excel('20220701TPHP_1783file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
+# df %>% select(-(1:21)) %>% min(na.rm = T) # 37.4647
+# mat <- df %>% column_to_rownames('FileName') %>% select(-(1:20))
+# mat <- as.matrix(mat)
+# typeof(mat)
+# write.table(mat, '20220701TPHP_1783file_117pool_ProteinMatrix.tsv', sep = '\t', row.names = T, quote = F)
+
+
+#  1783 files  117 pool  protein matrix
+pm <- read.delim('20220701TPHP_1783file_117pool_ProteinMatrix.tsv', check.names = F)
+dim(pm) # 1900 13479
+pm %<>% removeRowsAllNa() %>% removeColsAllNa()
+dim(pm) # 1900 13479
+pm %<>% select(-str_subset(colnames(pm), 'iRT')) # remove any iRT1-11
+dim(pm) # 1900 13477
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm %>% rownames_to_column('FileName')
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+colnames(pm) <- df$FileName
+```
+
+## All
+```{r}
+prot_num <- apply(pm, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#     0%     25%     50%     75%    100% 
+# 579.00 5444.50 6751.00 8078.25 9505.00 
+
+#missing
+ge.na.ratio(pm) # 0.5130111
+df_new <- pm[apply(pm, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.2204083
+
+
+info <- info_of_pm(df_new)
+df_info %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info) # 1898
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info %<>% left_join(df_info, by = c('Filename' = 'FileName'))
+info$tissue_type <- info$anatomical_classification
+# info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+tissue_tab <- data.frame(label = factor(info$tissue_type),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+sample_tab <- data.frame(label = factor(info$sample_type),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_date.pdf', p$plot, width = 30, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_month.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_ins.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_trans.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), sample_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_sample.pdf', p$plot, width = 14, height = 14)
+
+p <- mytSNE(log2(df_new), sample_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3, seed = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_tsne_row_sample.pdf', p$plot, width = 14, height = 14)
+p$table %>% rio::export('20230708TPHP_DIA_CA_SCA_N_SN_pool_tsne_row_sample.xlsx')
+
+# p_UMAP <- myUMAP(log2(df_new), sample_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+
+# 
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_batch.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_date.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_month.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_ins.pdf', p$plot, width = 14, height = 14)
+# 
+# p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = F, colNormalization = T, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_col_trans.pdf', p$plot, width = 14, height = 14)
+# 
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), batch_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), date_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), Month_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), ins_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), trans_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = T, colNormalization = F, drawOnly = T)
+# myPCA(log2(df_new), tissue_tab, visul = 'canvas', rowNormalization = F, colNormalization = T, drawOnly = T)
+
+```
+
+### freestyle
+```{r}
+## PCA
+## M is a matrix or dataframe, rows are samples and columns are features, rownames are sample names
+data <- log2(df_new)
+DF <- t(data)
+M <-data.frame(t(apply(DF, 1, function(v) {
+  (v - mean(v, na.rm = T)) / sd(v, na.rm = T)
+})))
+M[is.na(M)] <- 0
+
+m1 <- prcomp(M)
+Y <- scale(M, m1$center, m1$scale) %*% m1$rotation
+Y <- Y[, c(1, 2)]
+
+eigs <- m1$sdev ^ 2
+pc1 <- round(eigs[1] / sum(eigs)*100,2) 
+pc2<-round(eigs[2] / sum(eigs)*100,2) 
+colnames(Y) <- c(paste("PC1 (",pc1,"%)",sep = ""), paste("PC2 (",pc2,"%)",sep = ""))
+
+
+
+# scatter plot -- organ
+organ_tab <- data.frame(label = str_to_sentence(info$anatomical_classification),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+organ_tab$label %<>% factor(levels = c(sort(unique(.)), 'Pool'), ordered = T)
+organ_tab[str_which(rownames(organ_tab), 'pool'), 'label'] <- 'Pool'
+
+
+rlt <- cbind(Y, as.data.frame(organ_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#368FC6', '#55BC6D', '#D8894E', '#7C0823', '#9D7DDB', '#F0EA43', '#000000', '#888888')
+my_shapes <- c(1, 2, 6, 3, 4, 15, 17:19)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, shape = label, color = label), size = 3)+
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+
+# scatter plot -- Glass capillary (ion transporter)
+trans_tab <- data.frame(label = factor(info$trans %>% str_replace('T', 'Glass capillary')),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+trans_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(trans_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label), size = 3)+
+  scale_color_manual(values = my_colors)+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_trans_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_trans_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+# scatter plot -- Acquisition date (month)
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+Month_tab[which(Month_tab$label == 'Month_2020062'), 'label'] <- 'Month_202006'
+Month_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(Month_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+my_shapes <- c(19, 17, 15)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label, shape = label), size = 3)+
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_month_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_month_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+
+# scatter plot -- sample
+sample_tab <- data.frame(label = str_to_sentence(info$sample_type),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+sample_tab[is.na(sample_tab$label), 'label'] <- 'Pool'
+sample_tab[sample_tab$label == 'Carcinoma', 'label'] <- 'Tumor'
+sample_tab[sample_tab$label == 'Adjacent', 'label'] <- 'Non-tumor'
+sample_tab$label %<>% factor(levels = c('Tumor', 'Non-tumor', 'Normal', 'Fetal', 'Pool'), ordered = T)
+
+rlt <- cbind(Y, as.data.frame(sample_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#368FC6', '#55BC6D', '#9D7DDB', '#000000')
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label), shape = 'circle', size = 3)+
+  scale_color_manual(values = my_colors)+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_sample_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_rows_sample_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+```
+
+### ===use t-SNE; ===
+```{r}
+info %>% count(sample_type)
+ge.plot.tsne<-function(data,type,title="",label=NULL,seed=2023){
+  col2<-rep(brewer.pal(9,"Set1")[1:9],3)[1:4]
+  cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+  cl2 <- cl[match(type,row.names(cl)),1]
+  set2<-c(rep(0,times=4))
+  st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+  st2<-st[match(type,row.names(cl)),1]
+  df10 <- data
+  df10[is.na(df10)] <- 0 #
+  df10 <- t(apply(df10, 1, scale))  #
+  colnames(df10) <- type
+  set.seed(seed)
+  tsne <- Rtsne::Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+  pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+  if(is.null(label)){
+    par(mai=c(0.4,0.5,0.2,2.4))
+    plot(tsne$Y,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+    legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+           x.intersp=0.5,bty='n')
+  }else{
+    plot(tsne$Y,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+    text(tsne$Y,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+    legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+  }
+  dev.off()
+  
+  
+  return(tsne$Y)
+}
+
+all1<-merge(info,all[,c(1,18:ncol(all))],by="FileName",all.X=T)
+head(colnames(all1),n=25)
+type<-all1$sample_type
+df<-apply(t(all1[,-c(1:21)]),c(1,2),as.numeric)
+class(df)
+colnames(df)<-all1$FileName
+
+
+
+```
+
+
+## pool
+```{r}
+pool <- pm %>% as.data.frame() %>%
+  select(contains('pool'))
+pool %<>% removeRowsAllNa()
+dim(pool) # 10741   117
+
+prot_num <- apply(pool, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 5553 6030 6254 6571 7191 
+
+pool1 <- pool
+df_bar <- pool1 %>%
+  summarize_each(function(x) sum(!is.na(x))) %>%
+  t %>%
+  as.data.frame() %>%
+  rownames_to_column('filename') %>%
+  rename(prot_num = V1) %>%
+  mutate(
+    date = str_extract(filename, '[0-9]{8,9}'),
+    xlab = str_c(str_extract(filename, '^[A-Z]+[0-9]+'), str_extract(filename, '[0-9]+\\.d'), sep = '_') %>% str_replace('\\.d', '')
+  ) %>%
+  arrange(date)
+
+par(mar=c(10, 4.1, 4.1, 2.1))
+barplot(df_bar$prot_num, names.arg = df_bar$xlab, las=2)
+
+
+#missing
+ge.na.ratio(pool1) # return 0.4094798
+df_new <- pool1[apply(pool1, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new)# return 0.09244705
+
+
+#correlation
+library(corrplot)
+new_cors <- cor(log2(df_new),use = "pairwise.complete.obs")
+uptri_pool <- new_cors[upper.tri(new_cors)]
+median(uptri_pool) # 0.9723088
+min(uptri_pool) # 0.9445812
+pdf('2023019TPHP_DIA_all_pool_log2_pearson_cor.pdf', width = 50, height = 50)
+corrplot(new_cors, order ="AOE", type = "upper", diag = F, tl.pos = 'n', cl.cex = 2, col.lim = c(0.93, 1.0),
+         tl.col = "black", addCoef.col = "grey", number.cex = 1)
+graphics.off()
+
+# canvasXpress(data=df_new,
+#              correlationAxis="samples",
+#              graphType="Correlation",
+#              showTransition=FALSE,
+#              title="Correlation Plot",
+#              correlationType ="diamond") 
+
+df_r <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_pool_log2_pearson_violin.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230719TPHP_DIA_all_pool_log2_pearson_violin.xlsx')
+
+
+# protein cv
+library(ggplot2)
+pool1_cv <- apply(df_new, 1, function(x){sd(x, na.rm = T)/mean(x, na.rm = T)})
+df_new_cv <- data.frame(protein= rownames(df_new), cv = pool1_cv)
+median(pool1_cv, na.rm = T) #median cv=0.1672693
+dim(df_new_cv) # 6538    2
+
+#vio
+df_new_vio <- data.frame(CV=pool1_cv, Type="pool")
+med <- median(df_new_vio$CV) # 0.1672693
+p <- ggplot(df_new_vio, aes(x = Type, y = CV, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'pool', y = max(na.omit(df_new_vio$CV)) * 1.05, label = paste0('Median of pool: ', sprintf('%.3f', med), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+ggsave('20230719TPHP_DIA_all_pool_CV_violin.pdf', p, width = 6, height = 6)
+df_new_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230719TPHP_DIA_all_pool_CV_violin.xlsx')
+
+#cv scatter plot
+pro_mean<-apply(df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$rank<-pro_mean
+p <- ggplot(df_new_cv, aes(x = log10(rank), y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed") +
+  labs(x = 'log10Intensity', y = 'Coefficient of Variation') +
+  annotate("text", x = max(log10(df_new_cv$rank)) * 0.98, y = 0.4, label = 'CV = 0.3', color="red", size = 5, angle = 0) +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))
+ggsave('20230719TPHP_DIA_all_pool_CV_scatter.pdf',p,width = 6, height = 6)
+rio::export(df_new_cv, '20230719TPHP_DIA_all_pool_CV_scatter.xlsx')
+
+```
+
+## rep
+```{r}
+df1 <- pm %>% t() %>% as.data.frame() %>% rownames_to_column('FileName') %>%
+  right_join(df_info, ., by = 'FileName')
+
+info <- df1 %>% select(1:17)
+
+# get rep tags
+info <- info[, c('FileName', 'DIA_ID', 'Rep')]
+reps <- unique(na.omit(info$Rep))
+info %<>% dplyr::filter((`Rep` %in% reps) | (`DIA_ID` %in% reps))
+info[is.na(info$Rep), 'Rep'] <- info[is.na(info$Rep), 'DIA_ID']
+rep_id <- unique(info$Rep)
+
+df2 <- info %>% # with rep
+  filter(Rep %in% rep_id)
+df2$DIA_ID <- df2$Rep
+
+max_nrep <- info %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted); not mind warnings
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+df2 %<>% left_join(select(df1, -c('DIA_ID', 'Rep')), by = 'FileName')
+
+
+rep_id <- df2 %>% # rep_id (sorted)
+  count(DIA_ID) %>%
+  arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+'))) %>%
+  filter(n > 1) %>%
+  pull(DIA_ID)
+
+
+df2 <- df2 %>% # with rep
+  filter(DIA_ID %in% rep_id)
+
+df2 %<>% arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+')))
+df2$FileName %<>% factor(levels = unique(.), ordered = T)
+df2$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+max_nrep <- df2 %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted)
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+
+
+
+```
+
+### barplot
+```{r}
+mat <- df2 %>% select(-(1:17)) %>% t %>% as.data.frame
+colnames(mat) <- df2$FileName
+Protein <- apply(mat, 2, function(col) sum(!is.na(col)))
+
+df_bar <- df2 %>%
+  select(FileName, DIA_ID) %>%
+  add_column(Protein = apply(mat, 2, function(col) sum(!is.na(col))),
+             .before = 3)
+df_bar$FileName %<>% factor(levels = unique(.), ordered = T)
+df_bar$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+df_bar2 <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  dplyr::mutate(Rep = str_c('rep', 1:n()))
+
+get_random_colors <- function(n, from_color_palette = brewer.pal(8, "Set2")){
+  my_colors <- sample(from_color_palette, 1)
+  i <- 1
+  while(length(my_colors) < n){
+    color <- sample(from_color_palette, 1)
+    if(color != my_colors[i]){
+      my_colors[i+1] <- color
+      i <- i + 1
+    }
+  }
+  return(my_colors)
+}
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = DIA_ID, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()
+ggsave('20230719TPHP_DIA_all_rep_barplot.pdf', p, width = 15, height = 16)
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = FileName, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  geom_text(aes(label = df_bar2$Protein), # set the second columns as label of numbers
+            size = 3, hjust = 0.5, vjust = 0.5, position = "stack", color = 'black')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()# + theme(legend.position='none')
+ggsave('20230719TPHP_DIA_all_rep_barplot_byfilename.pdf', p, width = 15, height = 34)
+
+
+df_bar3 <- df_bar2 %>%
+  pivot_wider('Rep', names_from = 'DIA_ID', values_from = 'Protein') %>%
+  mutate_if(is.numeric, sort, na.last = T)
+
+mat_bar3 <- df_bar3 %>% column_to_rownames('Rep')
+for(i in nrow(mat_bar3):2){
+  mat_bar3[i , ] <- ifelse(is.na(mat_bar3[i, ] - mat_bar3[i-1, ]), 0, mat_bar3[i, ] - mat_bar3[i-1, ]) %>% unlist
+}
+mat_bar3 <- mat_bar3[nrow(mat_bar3):1, ]
+mat_bar3[mat_bar3 == 0] <- NA
+
+df_bar4 <- mat_bar3 %>% rownames_to_column('Rep')
+long_data <- pivot_longer(df_bar4, -Rep, names_to = "DIA_ID", values_to = "Protein")
+long_data$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+long_data$Rep %<>% factor(levels = unique(.), ordered = T)
+
+p <- ggplot(data=long_data, mapping=aes(x=DIA_ID, y=Protein, fill=Rep))+
+  geom_bar(stat="identity",width=0.5,position='stack')+
+  # scale_fill_manual(values=colorRampPalette(c('#FFB6C1', '#ADD8E6'))(3))+
+  scale_fill_brewer(palette = "Spectral", direction = 1)+
+  # scale_fill_manual(values = my_colors[1:nrow(mat_bar3)])+
+  # scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  # coord_flip() +
+  ggthemes::theme_base()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+ggsave('20230719TPHP_DIA_all_rep_barplot_stack.pdf', p, width = 20, height = 8)
+
+list(table1 = df_bar2, table2 = long_data) %>% 
+  rio::export('20230719TPHP_DIA_all_rep_protnum.xlsx')
+
+# max - min
+df_diff_prot <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  summarise(`max-min` = max(Protein) - min(Protein))
+
+df_diff_prot %>% arrange(desc(`max-min`))
+plot(density(df_diff_prot$`max-min`))
+
+```
+
+
+
+###violinplot
+```{r}
+my_vios <- function(df_vios, ylim = NULL, flip = F){
+  meds <- na.omit(df_vios$CV)
+  median(meds, na.rm = T) # 0.1281786
+  # fivenum(meds) # 0.0000035079 0.0515402367 0.1281785918 0.2848757979 1.4121620499
+  
+  p <- ggplot(df_vios, aes(x = ID, y = CV, fill = ID))+
+    geom_jitter(color = '#CCCCCC', size=0.5, alpha=0.1) +
+    geom_violin(aes(fill = ID, color = ID)) +
+    geom_boxplot(aes(fill = ID), width=0.1, color = '#000000') +
+    stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+    labs(y = "Coefficient of Variation") +
+    theme(legend.position='none',
+          #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+          #legend.title = element_text(size=20,color="black"),
+          panel.grid.major =element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_line(colour = "black"))+
+    theme(panel.grid =element_blank())+
+    theme(axis.text = element_text(size = 20,color = "black"))+
+    #theme(axis.text.x = element_text(angle = 90))+
+    theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+    theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+    theme(axis.title.x=element_blank())+
+    theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+    #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+    # scale_fill_brewer(palette = "Set2")
+    # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+    # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+    scale_color_manual(values = rep("#FC8D62", length(unique(df_vios$ID)))) +
+    scale_fill_manual(values = rep("#FC8D62", length(unique(df_vios$ID))))
+  if (flip){
+    p <- p + labs(
+      #title = "",
+      #subtitle = "",
+      # caption = "",
+      # tag = "",
+      x = "Coefficient of Variation")
+  }
+  else{
+    p <- p + labs(
+      y = "Coefficient of Variation")+
+      theme(axis.text.x = element_text(angle = 90))
+  }
+
+  if (flip){
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1.00), y = max(na.omit(df_vios$CV)) * 0.97, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }else{
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1 / 15), y = max(na.omit(df_vios$CV)) * 1.05, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }
+  if (flip)  {p <- p + coord_flip()}
+  if ( !is.null(ylim) ) { p <- p + ylim(ylim[1], ylim[2])}
+  return(p)
+}
+
+cv <- function(x){
+  sd(x, na.rm = T) / mean(x, na.rm = T)
+}
+
+
+
+df_cv <- df2 %>%
+  select(DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+
+# require(plyr)
+df_vios <- plyr::ddply(as.data.frame(df_cv), 'DIA_ID', function(dfsub){
+  data.frame(ID = unique(dfsub$DIA_ID),
+             CV = apply(dfsub[, -1], 2, cv))
+})
+df_vios %<>% drop_na()
+df_vios %<>% arrange(as.numeric(str_extract(ID, '\\d+')))
+df_vios$ID %<>% factor(levels = unique(.), ordered = T)
+p <- my_vios(df_vios)
+ggsave('20230719TPHP_DIA_all_rep_CV_violinplot.pdf', p, width = 20, height = 9)
+
+
+```
+
+
+### correlation
+```{r}
+library(corrplot)
+# i <- 1
+# df_qc <- df2 %>%
+#   filter(DIA_ID == rep_id[i]) %>%
+#   select(FileName, DIA_ID, 22:12249)
+
+# correlation --------------
+reps <- rep_id
+length(reps) # 100
+df_qc <- df2 %>% select(FileName, DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+df_qc[, -(1:2)] %<>% log2()
+
+uptri_reps <- c()
+cornames <- c()
+pdf('20230719TPHP_DIA_all_rep_log2_pearson.pdf',width = 45,height = 25)
+par(mfrow=c(4, 6))
+for(i in 1:length(reps)){
+  rep <- reps[i]
+  submat <- df_qc %>% dplyr::filter(DIA_ID == reps[i]) %>% dplyr::select(-(1:2)) %>% t %>% as.data.frame %>% drop_na
+  if((ncol(submat) < 2) | (nrow(submat)) <= 0) { next } # jump IDs with only one replicate
+  submat <- submat[apply(submat, 1, function(x){!all(is.na(x)) > 0}), ]
+  if(nrow(submat) == 0) { next } # jump IDs with all NA
+  # remove NA value
+  
+  df_cor <- submat[apply(submat, 1, function(x){!any(is.na(x))}), ]
+  colnames(df_cor) <- paste0(rep(rep, length(df_cor)), '-', seq(1, ncol(df_cor)))
+  new_cors <- cor(df_cor)
+  uptri_rep <- new_cors[upper.tri(new_cors)]
+  uptri_reps <- append(uptri_reps, median(uptri_rep, na.rm = T))
+  cornames[i] <- rep
+  
+  cex.before <- par("cex") 
+  par(cex = 4) 
+  corrplot(corr=cor(df_cor),order="AOE",type="upper", tl.cex = 2/par("cex"), cl.cex = 1/par("cex"))
+  corrplot(corr= cor(df_cor),add=TRUE, type="lower", method="number",order="AOE",diag=FALSE,tl.pos="n", cl.pos="n", tl.cex = 2/par("cex"), cl.cex = 1/par("cex", )
+           #, col="black"
+  )
+  par(cex = cex.before)
+}
+my.dev.off()
+# names(uptri_reps) <- na.omit(cornames)
+median(uptri_reps, na.rm = T) # 0.966366
+quantile(uptri_reps)
+#        0%       25%       50%       75%      100% 
+# 0.8176294 0.9545142 0.9663660 0.9779217 0.9887560 
+# sort(uptri_reps)
+# pdf('TPHP_DIA_CA-SCA_qu_limma_rep_log2_pearson_hist_20230707.pdf',width = 6,height = 4)
+# hist(uptri_reps, xlab = '', main = 'Pearson correlation')
+# my.dev.off()
+
+df_r <- data.frame(Type = "Rep", "Pearson's r" = uptri_reps, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Rep', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_rep_log2_pearson_violin.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230719TPHP_DIA_all_rep_log2_pearson_violin.xlsx')
+
+```
+
+
+## combine pool and rep
+### correlation
+```{r}
+df_r1 <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+df_r2 <- data.frame(Type = "Replicates", "Pearson's r" = uptri_reps, check.names = F)
+df_r <- rbind(df_r1, df_r2)
+
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0)+
+  annotate("text", x = 'Replicates', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(uptri_reps)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_pool-rep_log2_pearson_violin.pdf', p, width = 6, height = 5)
+rio::export(df_r, '20230719TPHP_DIA_all_pool-rep_log2_pearson_violin.xlsx')
+
+
+
+
+
+
+
+```
+
+### CV
+```{r}
+df_vio1 <- data.frame(CV=pool1_cv, Type="Pool")
+df_vio2 <- data.frame(CV=df_vios$CV, Type="Replicates")
+df_vio <- rbind(df_vio1, df_vio2)
+
+p <- ggplot(df_vio, aes(x = Type, y = CV, fill = Type))+
+  # geom_jitter(color = '#CCCCCC', size=0.1, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(df_vio1$CV)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0) +
+  annotate("text", x = 'Replicates', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(df_vio2$CV)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+ggsave('20230719TPHP_DIA_all_pool_CV_violin.pdf', p, width = 6, height = 6)
+
+df_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230719TPHP_DIA_all_pool_CV_violin.xlsx')
+
+```
+
+
+# CA-SCA-Normal after process
+## data reading
+```{r}
+pm0 <- read.delim('20220701TPHP_1783file_117pool_ProteinMatrix.tsv', check.names = F)
+pm0 %<>% t() %>% as.data.frame()
+pm1 <- data.table::fread("//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/TPHP_CA-SCA-pool_pm_qu_log2_limma_20220705.csv", sep = ",") %>% column_to_rownames("V1")
+pm2 <- data.table::fread("//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/TPHP_DIA_N-SN-pool_pm_quan_20220709.csv", sep = ",") %>%
+  column_to_rownames("V1") %>%
+  log2()
+
+pm3 <- pm0[, setdiff(colnames(pm0), union(colnames(pm1), colnames(pm2)))]
+pm3 %<>% removeColsAllNa() %>% removeRowsAllNa()
+pm3 %<>% rownames_to_column('prot')
+
+pm <- full_join(rownames_to_column(pm1, "prot"), rownames_to_column(pm2, "prot"), by = "prot") %>%
+  full_join(pm3, by = "prot") %>% 
+  column_to_rownames("prot") %>%
+  t()# %>%
+  # as.data.frame() %>%
+  # rownames_to_column("FileName")
+
+dim(pm) # 1900 13479
+pm %<>% removeRowsAllNa() %>% removeColsAllNa()
+pm %<>% as.data.frame() %>% select(-str_subset(colnames(pm), 'iRT')) # remove any iRT1-11
+dim(pm) # 1900 13477
+rio::export(pm, '20220701TPHP_1783file_117pool_ProteinMatrix_processed_afterQC.tsv')
+
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm %>% rownames_to_column('FileName')
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+colnames(pm) <- df$FileName
+
+
+
+
+```
+
+
+## all samples PCA
+```{r}
+pm <- t(pm)
+prot_num <- apply(pm, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+ #     0%     25%     50%     75%    100% 
+ # 579.00 5449.50 6751.00 8076.75 9505.00 
+
+#missing
+ge.na.ratio(pm) # 0.5130173
+df_new <- pm[apply(pm, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.2202687
+
+
+info <- info_of_pm(df_new)
+df_info %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info) # 1898
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info %<>% left_join(df_info, by = c('Filename' = 'FileName'))
+info$tissue_type <- info$anatomical_classification
+# info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+tissue_tab <- data.frame(label = factor(info$tissue_type),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+date_tab <- data.frame(label = factor(paste0('Date_', info$date)),
+                       row.names = info$Filename,
+                       stringsAsFactors = F)
+
+Month_tab <- data.frame(label = factor(paste0('Month_', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+batch_tab <- data.frame(label = factor(info$batch),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+ins_tab <- data.frame(label = factor(info$instrument),
+                      row.names = info$Filename,
+                      stringsAsFactors = F)
+trans_tab <- data.frame(label = factor(info$trans),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+sample_tab <- data.frame(label = factor(info$sample_type),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+
+# p <- myPCA(log2(df_new), batch_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+# ggsave('//172.16.13.136/TPHP/results/rlt_combine_swissprot1025/QC/20220704TPHP_DIA_CA_SCA_pool_PCA_row_batch.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), date_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_PCA_row_date_afterProcess.pdf', p$plot, width = 30, height = 14)
+
+p <- myPCA(log2(df_new), Month_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_PCA_row_month_afterProcess.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), ins_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_PCA_row_ins_afterProcess.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), trans_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_PCA_row_trans_afterProcess.pdf', p$plot, width = 14, height = 14)
+
+p <- myPCA(log2(df_new), sample_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_PCA_row_sample_afterProcess.pdf', p$plot, width = 14, height = 14)
+
+p <- mytSNE(log2(df_new), sample_tab, visul = 'ggplot', rowNormalization = T, colNormalization = F, size = 3, seed = 10)
+ggsave('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_tsne_row_sample_afterProcess.pdf', p$plot, width = 14, height = 14)
+p$table %>% rio::export('20230708TPHP_DIA_processed_CA_SCA_N_SN_pool_tsne_row_sample_afterProcess.xlsx')
+
+```
+
+## pool
+```{r}
+pool <- pm %>% as.data.frame() %>%
+  select(contains('pool'))
+pool %<>% removeRowsAllNa()
+dim(pool) # 10741   117
+
+prot_num <- apply(pool, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 5553 6030 6254 6571 7191 
+
+pool1 <- pool
+df_bar <- pool1 %>%
+  summarize_each(function(x) sum(!is.na(x))) %>%
+  t %>%
+  as.data.frame() %>%
+  rownames_to_column('filename') %>%
+  rename(prot_num = V1) %>%
+  mutate(
+    date = str_extract(filename, '[0-9]{8,9}'),
+    xlab = str_c(str_extract(filename, '^[A-Z]+[0-9]+'), str_extract(filename, '[0-9]+\\.d'), sep = '_') %>% str_replace('\\.d', '')
+  ) %>%
+  arrange(date)
+
+par(mar=c(10, 4.1, 4.1, 2.1))
+barplot(df_bar$prot_num, names.arg = df_bar$xlab, las=2)
+
+
+#missing
+ge.na.ratio(pool1) # return 0.4094798
+df_new <- pool1[apply(pool1, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new)# return 0.09244705
+
+
+#correlation
+library(corrplot)
+new_cors <- cor(log2(df_new),use = "pairwise.complete.obs")
+uptri_pool <- new_cors[upper.tri(new_cors)]
+median(uptri_pool) # 0.9635863
+min(uptri_pool) # 0.9308482
+pdf('2023019TPHP_DIA_all_pool_log2_pearson_cor_afterProcess.pdf', width = 50, height = 50)
+corrplot(new_cors, order ="AOE", type = "upper", diag = F, tl.pos = 'n', cl.cex = 2, col.lim = c(0.93, 1.0),
+         tl.col = "black", addCoef.col = "grey", number.cex = 1)
+graphics.off()
+
+# canvasXpress(data=df_new,
+#              correlationAxis="samples",
+#              graphType="Correlation",
+#              showTransition=FALSE,
+#              title="Correlation Plot",
+#              correlationType ="diamond") 
+
+df_r <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_pool_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230719TPHP_DIA_all_pool_log2_pearson_violin_afterProcess.xlsx')
+
+
+# protein cv
+library(ggplot2)
+pool1_cv <- apply(2^df_new, 1, function(x){sd(x, na.rm = T)/mean(x, na.rm = T)})
+df_new_cv <- data.frame(protein= rownames(df_new), cv = pool1_cv)
+median(pool1_cv, na.rm = T) #median cv=0.3896839
+dim(df_new_cv) # 6538    2
+
+#vio
+df_new_vio <- data.frame(CV=pool1_cv, Type="pool")
+med <- median(df_new_vio$CV) # 0.3896839
+p <- ggplot(df_new_vio, aes(x = Type, y = CV, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'pool', y = max(na.omit(df_new_vio$CV)) * 1.05, label = paste0('Median of pool: ', sprintf('%.3f', med), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+ggsave('20230719TPHP_DIA_all_pool_CV_violin_afterProcess.pdf', p, width = 6, height = 6)
+df_new_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230719TPHP_DIA_all_pool_CV_violin_afterProcess.xlsx')
+
+#cv scatter plot
+pro_mean<-apply(2^df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$rank<-pro_mean
+p <- ggplot(df_new_cv, aes(x = log10(rank), y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed") +
+  labs(x = 'log10Intensity', y = 'Coefficient of Variation') +
+  annotate("text", x = max(log10(df_new_cv$rank)) * 0.98, y = 0.4, label = 'CV = 0.3', color="red", size = 5, angle = 0) +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))
+ggsave('20230719TPHP_DIA_all_pool_CV_scatter_afterProcess.pdf',p,width = 6, height = 6)
+rio::export(df_new_cv, '20230719TPHP_DIA_all_pool_CV_scatter_afterProcess.xlsx')
+
+```
+
+## rep
+```{r}
+df1 <- pm %>% t() %>% as.data.frame() %>% rownames_to_column('FileName') %>%
+  right_join(df_info, ., by = 'FileName')
+
+info <- df1 %>% select(1:17)
+
+# get rep tags
+info <- info[, c('FileName', 'DIA_ID', 'Rep')]
+reps <- unique(na.omit(info$Rep))
+info %<>% dplyr::filter((`Rep` %in% reps) | (`DIA_ID` %in% reps))
+info[is.na(info$Rep), 'Rep'] <- info[is.na(info$Rep), 'DIA_ID']
+rep_id <- unique(info$Rep)
+
+df2 <- info %>% # with rep
+  filter(Rep %in% rep_id)
+df2$DIA_ID <- df2$Rep
+
+max_nrep <- info %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted); not mind warnings
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+df2 %<>% left_join(select(df1, -c('DIA_ID', 'Rep')), by = 'FileName')
+
+
+rep_id <- df2 %>% # rep_id (sorted)
+  count(DIA_ID) %>%
+  arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+'))) %>%
+  filter(n > 1) %>%
+  pull(DIA_ID)
+
+
+df2 <- df2 %>% # with rep
+  filter(DIA_ID %in% rep_id)
+
+df2 %<>% arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+')))
+df2$FileName %<>% factor(levels = unique(.), ordered = T)
+df2$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+max_nrep <- df2 %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted)
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+
+
+
+```
+
+### barplot
+```{r}
+mat <- df2 %>% select(-(1:17)) %>% t %>% as.data.frame
+colnames(mat) <- df2$FileName
+Protein <- apply(mat, 2, function(col) sum(!is.na(col)))
+
+df_bar <- df2 %>%
+  select(FileName, DIA_ID) %>%
+  add_column(Protein = apply(mat, 2, function(col) sum(!is.na(col))),
+             .before = 3)
+df_bar$FileName %<>% factor(levels = unique(.), ordered = T)
+df_bar$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+df_bar2 <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  dplyr::mutate(Rep = str_c('rep', 1:n()))
+
+get_random_colors <- function(n, from_color_palette = brewer.pal(8, "Set2")){
+  my_colors <- sample(from_color_palette, 1)
+  i <- 1
+  while(length(my_colors) < n){
+    color <- sample(from_color_palette, 1)
+    if(color != my_colors[i]){
+      my_colors[i+1] <- color
+      i <- i + 1
+    }
+  }
+  return(my_colors)
+}
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = DIA_ID, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()
+ggsave('20230719TPHP_DIA_all_rep_barplot_afterProcess.pdf', p, width = 15, height = 16)
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = FileName, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  geom_text(aes(label = df_bar2$Protein), # set the second columns as label of numbers
+            size = 3, hjust = 0.5, vjust = 0.5, position = "stack", color = 'black')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()# + theme(legend.position='none')
+ggsave('20230719TPHP_DIA_all_rep_barplot_byfilename_afterProcess.pdf', p, width = 15, height = 34)
+
+
+df_bar3 <- df_bar2 %>%
+  pivot_wider('Rep', names_from = 'DIA_ID', values_from = 'Protein') %>%
+  mutate_if(is.numeric, sort, na.last = T)
+
+mat_bar3 <- df_bar3 %>% column_to_rownames('Rep')
+for(i in nrow(mat_bar3):2){
+  mat_bar3[i , ] <- ifelse(is.na(mat_bar3[i, ] - mat_bar3[i-1, ]), 0, mat_bar3[i, ] - mat_bar3[i-1, ]) %>% unlist
+}
+mat_bar3 <- mat_bar3[nrow(mat_bar3):1, ]
+mat_bar3[mat_bar3 == 0] <- NA
+
+df_bar4 <- mat_bar3 %>% rownames_to_column('Rep')
+long_data <- pivot_longer(df_bar4, -Rep, names_to = "DIA_ID", values_to = "Protein")
+long_data$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+long_data$Rep %<>% factor(levels = unique(.), ordered = T)
+
+p <- ggplot(data=long_data, mapping=aes(x=DIA_ID, y=Protein, fill=Rep))+
+  geom_bar(stat="identity",width=0.5,position='stack')+
+  # scale_fill_manual(values=colorRampPalette(c('#FFB6C1', '#ADD8E6'))(3))+
+  scale_fill_brewer(palette = "Spectral", direction = 1)+
+  # scale_fill_manual(values = my_colors[1:nrow(mat_bar3)])+
+  # scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  # coord_flip() +
+  ggthemes::theme_base()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+ggsave('20230719TPHP_DIA_all_rep_barplot_stack_afterProcess.pdf', p, width = 20, height = 8)
+
+list(table1 = df_bar2, table2 = long_data) %>% 
+  rio::export('20230719TPHP_DIA_all_rep_protnum_afterProcess.xlsx')
+
+# max - min
+df_diff_prot <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  summarise(`max-min` = max(Protein) - min(Protein))
+
+df_diff_prot %>% arrange(desc(`max-min`))
+plot(density(df_diff_prot$`max-min`))
+
+```
+
+
+
+###violinplot
+```{r}
+my_vios <- function(df_vios, ylim = NULL, flip = F){
+  meds <- na.omit(df_vios$CV)
+  median(meds, na.rm = T) # 0.1281786
+  # fivenum(meds) # 0.0000035079 0.0515402367 0.1281785918 0.2848757979 1.4121620499
+  
+  p <- ggplot(df_vios, aes(x = ID, y = CV, fill = ID))+
+    geom_jitter(color = '#CCCCCC', size=0.5, alpha=0.1) +
+    geom_violin(aes(fill = ID, color = ID)) +
+    geom_boxplot(aes(fill = ID), width=0.1, color = '#000000') +
+    stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+    labs(y = "Coefficient of Variation") +
+    theme(legend.position='none',
+          #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+          #legend.title = element_text(size=20,color="black"),
+          panel.grid.major =element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_line(colour = "black"))+
+    theme(panel.grid =element_blank())+
+    theme(axis.text = element_text(size = 20,color = "black"))+
+    #theme(axis.text.x = element_text(angle = 90))+
+    theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+    theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+    theme(axis.title.x=element_blank())+
+    theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+    #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+    # scale_fill_brewer(palette = "Set2")
+    # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+    # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+    scale_color_manual(values = rep("#FC8D62", length(unique(df_vios$ID)))) +
+    scale_fill_manual(values = rep("#FC8D62", length(unique(df_vios$ID))))
+  if (flip){
+    p <- p + labs(
+      #title = "",
+      #subtitle = "",
+      # caption = "",
+      # tag = "",
+      x = "Coefficient of Variation")
+  }
+  else{
+    p <- p + labs(
+      y = "Coefficient of Variation")+
+      theme(axis.text.x = element_text(angle = 90))
+  }
+  
+  if (flip){
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1.00), y = max(na.omit(df_vios$CV)) * 0.97, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }else{
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1 / 15), y = max(na.omit(df_vios$CV)) * 1.05, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }
+  if (flip)  {p <- p + coord_flip()}
+  if ( !is.null(ylim) ) { p <- p + ylim(ylim[1], ylim[2])}
+  return(p)
+}
+
+cv <- function(x){
+  sd(x, na.rm = T) / mean(x, na.rm = T)
+}
+
+
+
+df_cv <- df2 %>%
+  select(DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+
+# require(plyr)
+df_cv_raw <- df_cv
+df_cv_raw[, -1] <- 2 ^ df_cv_raw[, -1]
+df_vios <- plyr::ddply(as.data.frame(df_cv_raw), 'DIA_ID', function(dfsub){
+  data.frame(ID = unique(dfsub$DIA_ID),
+             CV = apply(2^dfsub[, -1], 2, cv))
+})
+df_vios %<>% drop_na()
+df_vios %<>% arrange(as.numeric(str_extract(ID, '\\d+')))
+df_vios$ID %<>% factor(levels = unique(.), ordered = T)
+p <- my_vios(df_vios)
+ggsave('20230719TPHP_DIA_all_rep_CV_violinplot_afterProcess.pdf', p, width = 20, height = 9)
+
+
+```
+
+
+### correlation
+```{r}
+library(corrplot)
+# i <- 1
+# df_qc <- df2 %>%
+#   filter(DIA_ID == rep_id[i]) %>%
+#   select(FileName, DIA_ID, 22:12249)
+
+# correlation --------------
+reps <- rep_id
+length(reps) # 100
+df_qc <- df2 %>% select(FileName, DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+df_qc[, -(1:2)] %<>% log2()
+
+uptri_reps <- c()
+cornames <- c()
+pdf('20230719TPHP_DIA_all_rep_log2_pearson_afterProcess.pdf',width = 45,height = 25)
+par(mfrow=c(4, 6))
+for(i in 1:length(reps)){
+  rep <- reps[i]
+  submat <- df_qc %>% dplyr::filter(DIA_ID == reps[i]) %>% dplyr::select(-(1:2)) %>% t %>% as.data.frame %>% drop_na
+  if((ncol(submat) < 2) | (nrow(submat)) <= 0) { next } # jump IDs with only one replicate
+  submat <- submat[apply(submat, 1, function(x){!all(is.na(x)) > 0}), ]
+  if(nrow(submat) == 0) { next } # jump IDs with all NA
+  # remove NA value
+  
+  df_cor <- submat[apply(submat, 1, function(x){!any(is.na(x))}), ]
+  colnames(df_cor) <- paste0(rep(rep, length(df_cor)), '-', seq(1, ncol(df_cor)))
+  new_cors <- cor(df_cor)
+  uptri_rep <- new_cors[upper.tri(new_cors)]
+  uptri_reps <- append(uptri_reps, median(uptri_rep, na.rm = T))
+  cornames[i] <- rep
+  
+  cex.before <- par("cex") 
+  par(cex = 4) 
+  corrplot(corr=cor(df_cor),order="AOE",type="upper", tl.cex = 2/par("cex"), cl.cex = 1/par("cex"))
+  corrplot(corr= cor(df_cor),add=TRUE, type="lower", method="number",order="AOE",diag=FALSE,tl.pos="n", cl.pos="n", tl.cex = 2/par("cex"), cl.cex = 1/par("cex", )
+           #, col="black"
+  )
+  par(cex = cex.before)
+}
+graphics.off()
+# names(uptri_reps) <- na.omit(cornames)
+median(uptri_reps, na.rm = T) # 0.9598073
+quantile(uptri_reps)
+# 0%       25%       50%       75%      100% 
+# 0.8052441 0.9474766 0.9598073 0.9736081 0.9864017 
+# sort(uptri_reps)
+# pdf('TPHP_DIA_CA-SCA_qu_limma_rep_log2_pearson_hist_20230707.pdf',width = 6,height = 4)
+# hist(uptri_reps, xlab = '', main = 'Pearson correlation')
+# my.dev.off()
+
+df_r <- data.frame(Type = "Rep", "Pearson's r" = uptri_reps, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Rep', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_rep_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230719TPHP_DIA_all_rep_log2_pearson_violin_afterProcess.xlsx')
+
+```
+
+
+## combine pool and rep
+### correlation
+```{r}
+df_r1 <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+df_r2 <- data.frame(Type = "Replicates", "Pearson's r" = uptri_reps, check.names = F)
+df_r <- rbind(df_r1, df_r2)
+
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0)+
+  annotate("text", x = 'Replicates', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(uptri_reps)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+
+ggsave('20230719TPHP_DIA_all_pool-rep_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 5)
+rio::export(df_r, '20230719TPHP_DIA_all_pool-rep_log2_pearson_violin_afterProcess.xlsx')
+
+
+
+
+
+
+
+```
+
+### CV
+```{r}
+df_vio1 <- data.frame(CV=pool1_cv, Type="Pool")
+df_vio2 <- data.frame(CV=df_vios$CV, Type="Replicates")
+df_vio <- rbind(df_vio1, df_vio2)
+
+p <- ggplot(df_vio, aes(x = Type, y = CV, fill = Type))+
+  # geom_jitter(color = '#CCCCCC', size=0.1, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(df_vio1$CV)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0) +
+  annotate("text", x = 'Replicates', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(df_vio2$CV)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+ggsave('20230719TPHP_DIA_all_pool_CV_violin_afterProcess.pdf', p, width = 6, height = 6)
+
+df_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230719TPHP_DIA_all_pool_CV_violin_afterProcess.xlsx')
+
+```
+
+# Cancer only
+## before correction
+```{r}
+pm_after <- read.csv('TPHP_CA-SCA-pool_pm_qu_log2_limma_20220705.csv', check.names = F)
+
+pm <- read.delim('20220701TPHP_1783file_117pool_ProteinMatrix.tsv', check.names = F)
+dim(pm) # 1900 13479
+pm %<>% removeRowsAllNa() %>% removeColsAllNa()
+dim(pm) # 13304   731
+pm %<>% select(-str_subset(colnames(pm), 'iRT')) # remove any iRT1-11
+
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm %>% rownames_to_column('FileName')
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+df <- df[which(!(df$sample_type %in% c('Fetal', 'Normal'))), ]
+str_subset(setdiff(df$FileName, colnames(pm_after)), 'pool', negate = T) # character(0)
+df %<>% filter(FileName %in% colnames(pm_after))
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+df_info_cancer <- readxl::read_excel("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230116TPHP_CA_remove_allNA_1099_13392.xlsx", col_types = c(rep('guess', 5), rep('numeric', 13392)), na = '')
+df_info <- df_info_cancer %>% select(DIA_ID, organ) %>% distinct() %>% left_join(df_info, .)
+rio::export(df_info, 'my_info_20230726.xlsx')
+
+pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+colnames(pm) <- df$FileName
+dim(pm) # 13477 1167
+
+prot_num <- apply(pm, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 1305 6401 7663 8428 9505 
+
+
+#missing
+ge.na.ratio(pm) # 0.4562528
+df_new <- pm[apply(pm, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.1742892
+
+
+info <- info_of_pm(df_new)
+df_info %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info) # 1167
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info %<>% left_join(df_info, by = c('Filename' = 'FileName'))
+info$tissue_type <- info$anatomical_classification
+# info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+
+
+```
+
+### freestyle
+```{r}
+## PCA
+## M is a matrix or dataframe, rows are samples and columns are features, rownames are sample names
+data <- log2(df_new)
+DF <- t(data)
+M <-data.frame(t(apply(DF, 1, function(v) {
+  (v - mean(v, na.rm = T)) / sd(v, na.rm = T)
+})))
+M[is.na(M)] <- 0
+
+m1 <- prcomp(M)
+Y <- scale(M, m1$center, m1$scale) %*% m1$rotation
+Y <- Y[, c(1, 2)]
+
+eigs <- m1$sdev ^ 2
+pc1 <- round(eigs[1] / sum(eigs)*100,2) 
+pc2<-round(eigs[2] / sum(eigs)*100,2) 
+colnames(Y) <- c(paste("PC1 (",pc1,"%)",sep = ""), paste("PC2 (",pc2,"%)",sep = ""))
+
+
+
+# # scatter plot -- organ
+# organ_tab <- data.frame(label = str_to_sentence(info$anatomical_classification),
+#                         row.names = info$Filename,
+#                         stringsAsFactors = F)
+# organ_tab$label %<>% factor(levels = c(sort(unique(.)), 'Pool'), ordered = T)
+# organ_tab[str_which(rownames(organ_tab), 'pool'), 'label'] <- 'Pool'
+# 
+# 
+# rlt <- cbind(Y, as.data.frame(organ_tab$label))
+# colnames(rlt) <- c('x', 'y', 'label')
+# 
+# 
+# my_colors <- c('#368FC6', '#55BC6D', '#D8894E', '#7C0823', '#9D7DDB', '#F0EA43', '#000000', '#888888')
+# my_shapes <- c(1, 2, 6, 3, 4, 15, 17:19)
+# shape_color_pairs <- expand.grid(my_shapes, my_colors)
+# 
+# p <- ggplot(rlt)+
+#   geom_point(mapping = aes(x = x, y = y, shape = label, color = label), size = 3)+
+#   scale_shape_manual(values = shape_color_pairs[, 1])+
+#   scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+#   labs(
+#     #title = 'PCA',
+#     #subtitle = "This is subtitle",
+#     #caption = "This is caption",
+#     #tag = "This is a tag",
+#     x = colnames(Y)[1],
+#     y = colnames(Y)[2]
+#   )+
+#   theme(legend.position = 'right',
+#         legend.text = element_text(size = 10,color = "black"),
+#         legend.title = element_blank() ,
+#         #legend.title = element_text(size=20,color="black") ,
+#         panel.grid.major =element_blank(),
+#         panel.grid.minor = element_blank(),
+#         panel.background = element_blank(),
+#         axis.line = element_line(colour = "black"))+
+#   theme(panel.grid =element_blank())+
+#   theme(axis.text = element_text(size = 10,color = "black"))+
+#   theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+#   theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+#   theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+#   theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+# 
+# ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom.pdf', p, width = 10, height = 10)
+# ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom_woLegend.pdf',
+#        p + theme(legend.position = 'none'),
+#        width = 10, height = 10)
+
+
+
+
+# scatter plot -- Glass capillary (ion transporter)
+trans_tab <- data.frame(label = factor(info$trans %>% str_replace('T', 'No.')),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+trans_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(trans_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label), size = 3)+
+  scale_color_manual(values = my_colors)+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_trans_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_trans_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+# scatter plot -- Acquisition date (month)
+Month_tab <- data.frame(label = factor(paste0('', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+Month_tab[which(Month_tab$label == '2020062'), 'label'] <- '202006'
+Month_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(Month_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+my_shapes <- c(19, 17, 15)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label, shape = label), size = 3)+
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_month_custom.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_month_custom_woLegend.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+```
+
+
+## after correction
+```{r}
+pm <- read.csv('TPHP_CA-SCA-pool_pm_qu_log2_limma_20220705.csv', check.names = F)
+rownames(pm) <- pm[, 1]
+pm <- pm[, -1]
+dim(pm) # 13396  1169
+pm %<>% removeRowsAllNa() %>% removeColsAllNa()
+dim(pm) # 13396  1169
+
+pm <- pm[!(rownames(pm) %in% str_subset(rownames(pm), 'iRT')), ] # remove iRT
+
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+# df_pm <- pm %>% rownames_to_column('FileName')
+# 
+# 
+# df <- inner_join(df_info, df_pm, by = 'FileName')
+# df <- df[which(!(df$sample_type %in% c('Fetal', 'Normal'))), ]
+# str_subset(setdiff(df$FileName, colnames(pm_after)), 'pool', negate = T) # character(0)
+# df %<>% filter(FileName %in% colnames(pm_after))
+# colnames(df)[1:18]
+# df_info <- df %>% select(1:17)
+# 
+# pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+# colnames(pm) <- df$FileName
+# dim(pm) # 13477 1167
+
+prot_num <- apply(pm, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 1305 6398 7659 8428 9505 
+
+
+#missing
+ge.na.ratio(pm) # 0.4529912
+df_new <- pm[apply(pm, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new) # 0.1740233
+
+
+info <- info_of_pm(df_new)
+df_info %<>% filter(FileName %in% df_info$FileName)
+nrow(df_info) # 1781
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+# pool_name <- setdiff(df_info$FileName, df_info_edit$FileName)
+# df_info_edit[(nrow(df_info_edit)+1):(nrow(df_info_edit)+length(pool_name)), 'FileName'] <- pool_name
+# identical(df_info_edit$FileName, df_info$FileName) # must be TRUE
+info %<>% left_join(df_info, by = c('Filename' = 'FileName'))
+info$tissue_type <- info$anatomical_classification
+# info$DDA_lib_type <- df_info_edit$DDA_lib_type
+info$tissue_type[is.na(info$tissue_type)] <- 'NA'
+info$DDA_lib_type[is.na(info$DDA_lib_type)] <- 'NA'
+
+
+
+```
+
+### freestyle
+```{r}
+## PCA
+## M is a matrix or dataframe, rows are samples and columns are features, rownames are sample names
+data <- log2(df_new)
+DF <- t(data)
+M <-data.frame(t(apply(DF, 1, function(v) {
+  (v - mean(v, na.rm = T)) / sd(v, na.rm = T)
+})))
+M[is.na(M)] <- 0
+
+m1 <- prcomp(M)
+Y <- scale(M, m1$center, m1$scale) %*% m1$rotation
+Y <- Y[, c(1, 2)]
+
+eigs <- m1$sdev ^ 2
+pc1 <- round(eigs[1] / sum(eigs)*100,2) 
+pc2<-round(eigs[2] / sum(eigs)*100,2) 
+colnames(Y) <- c(paste("PC1 (",pc1,"%)",sep = ""), paste("PC2 (",pc2,"%)",sep = ""))
+
+
+
+# # scatter plot -- organ
+# organ_tab <- data.frame(label = str_to_sentence(info$anatomical_classification),
+#                         row.names = info$Filename,
+#                         stringsAsFactors = F)
+# organ_tab$label %<>% factor(levels = c(sort(unique(.)), 'Pool'), ordered = T)
+# organ_tab[str_which(rownames(organ_tab), 'pool'), 'label'] <- 'Pool'
+# 
+# 
+# rlt <- cbind(Y, as.data.frame(organ_tab$label))
+# colnames(rlt) <- c('x', 'y', 'label')
+# 
+# 
+# my_colors <- c('#368FC6', '#55BC6D', '#D8894E', '#7C0823', '#9D7DDB', '#F0EA43', '#000000', '#888888')
+# my_shapes <- c(1, 2, 6, 3, 4, 15, 17:19)
+# shape_color_pairs <- expand.grid(my_shapes, my_colors)
+# 
+# p <- ggplot(rlt)+
+#   geom_point(mapping = aes(x = x, y = y, shape = label, color = label), size = 3)+
+#   scale_shape_manual(values = shape_color_pairs[, 1])+
+#   scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+#   labs(
+#     #title = 'PCA',
+#     #subtitle = "This is subtitle",
+#     #caption = "This is caption",
+#     #tag = "This is a tag",
+#     x = colnames(Y)[1],
+#     y = colnames(Y)[2]
+#   )+
+#   theme(legend.position = 'right',
+#         legend.text = element_text(size = 10,color = "black"),
+#         legend.title = element_blank() ,
+#         #legend.title = element_text(size=20,color="black") ,
+#         panel.grid.major =element_blank(),
+#         panel.grid.minor = element_blank(),
+#         panel.background = element_blank(),
+#         axis.line = element_line(colour = "black"))+
+#   theme(panel.grid =element_blank())+
+#   theme(axis.text = element_text(size = 10,color = "black"))+
+#   theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+#   theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+#   theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+#   theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+# 
+# ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom.pdf', p, width = 10, height = 10)
+# ggsave('20230708TPHP_DIA_CA_SCA_N_SN_pool_PCA_row_organ_custom_woLegend.pdf',
+#        p + theme(legend.position = 'none'),
+#        width = 10, height = 10)
+
+
+
+
+# scatter plot -- Glass capillary (ion transporter)
+trans_tab <- data.frame(label = factor(info$trans %>% str_replace('T', 'No.')),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+trans_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(trans_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label), size = 3)+
+  scale_color_manual(values = my_colors)+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_trans_custom_afterProcess.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_trans_custom_woLegend_afterProcess.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+
+
+# scatter plot -- Acquisition date (month)
+Month_tab <- data.frame(label = factor(paste0('', info$month)),
+                        row.names = info$Filename,
+                        stringsAsFactors = F)
+Month_tab[which(Month_tab$label == '2020062'), 'label'] <- '202006'
+Month_tab$label %<>% factor(levels = c(sort(unique(.))), ordered = T)
+rlt <- cbind(Y, as.data.frame(Month_tab$label))
+colnames(rlt) <- c('x', 'y', 'label')
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+my_shapes <- c(19, 17, 15)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(rlt)+
+  geom_point(mapping = aes(x = x, y = y, color = label, shape = label), size = 3)+
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(
+    #title = 'PCA',
+    #subtitle = "This is subtitle",
+    #caption = "This is caption",
+    #tag = "This is a tag",
+    x = colnames(Y)[1],
+    y = colnames(Y)[2]
+  )+
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 10,color = "black"),
+        legend.title = element_blank() ,
+        #legend.title = element_text(size=20,color="black") ,
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 10,color = "black"))+
+  theme(axis.text.x = element_text(size = 10,color = "black", angle = 0))+
+  theme(plot.subtitle=element_text(size=10, hjust=0, color="black"))+
+  theme(axis.title.x=element_text(size=10, hjust=0.5, color="black"))+
+  theme(axis.title.y=element_text(size=10, hjust=0.5, color="black"))
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_month_custom_afterProcess.pdf', p, width = 10, height = 10)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_PCA_row_month_custom_woLegend_afterProcess.pdf',
+       p + theme(legend.position = 'none'),
+       width = 10, height = 10)
+
+```
+
+### pool
+```{r}
+pool <- pm %>% as.data.frame() %>%
+  select(contains('pool'))
+pool %<>% removeRowsAllNa()
+dim(pool) # 10052    61
+
+prot_num <- apply(pool, 2, function(x) sum(!is.na(x)))
+hist(prot_num)
+quantile(prot_num)
+#   0%  25%  50%  75% 100% 
+# 5553 5981 6101 6452 7118 
+
+pool1 <- pool
+df_bar <- pool1 %>%
+  summarize_each(function(x) sum(!is.na(x))) %>%
+  t %>%
+  as.data.frame() %>%
+  rownames_to_column('filename') %>%
+  rename(prot_num = V1) %>%
+  mutate(
+    date = str_extract(filename, '[0-9]{8,9}'),
+    xlab = str_c(str_extract(filename, '^[A-Z]+[0-9]+'), str_extract(filename, '[0-9]+\\.d'), sep = '_') %>% str_replace('\\.d', '')
+  ) %>%
+  arrange(date)
+
+par(mar=c(10, 4.1, 4.1, 2.1))
+barplot(df_bar$prot_num, names.arg = df_bar$xlab, las=2)
+
+
+#missing
+ge.na.ratio(pool1) # return 0.381764
+df_new <- pool1[apply(pool1, 1, function(x){sum(is.na(x)/length(x))}) < 0.6, ]
+ge.na.ratio(df_new)# return 0.08794885
+
+
+#correlation
+library(corrplot)
+new_cors <- cor(log2(df_new),use = "pairwise.complete.obs")
+uptri_pool <- new_cors[upper.tri(new_cors)]
+median(uptri_pool) # 0.9634908
+min(uptri_pool) # 0.9318713
+pdf('20230708TPHP_DIA_CA_SCA_pool_log2_pearson_cor_afterProcess.pdf', width = 50, height = 50)
+corrplot(new_cors, order ="AOE", type = "upper", diag = F, tl.pos = 'n', cl.cex = 2, col.lim = c(0.93, 1.0),
+         tl.col = "black", addCoef.col = "grey", number.cex = 1)
+graphics.off()
+
+# canvasXpress(data=df_new,
+#              correlationAxis="samples",
+#              graphType="Correlation",
+#              showTransition=FALSE,
+#              title="Correlation Plot",
+#              correlationType ="diamond") 
+
+df_r <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230708TPHP_DIA_CA_SCA_pool_log2_pearson_violin_afterProcess.xlsx')
+
+
+# protein cv
+library(ggplot2)
+pool1_cv <- apply(2^df_new, 1, function(x){sd(x, na.rm = T)/mean(x, na.rm = T)})
+df_new_cv <- data.frame(protein= rownames(df_new), cv = pool1_cv)
+median(pool1_cv, na.rm = T) #median cv=0.1888758
+dim(df_new_cv) # 6361    2
+
+#vio
+df_new_vio <- data.frame(CV=pool1_cv, Type="pool")
+med <- median(df_new_vio$CV) # 0.1888758
+p <- ggplot(df_new_vio, aes(x = Type, y = CV, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'pool', y = max(na.omit(df_new_vio$CV)) * 1.05, label = paste0('Median of pool: ', sprintf('%.3f', med), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_CV_violin_afterProcess.pdf', p, width = 6, height = 6)
+df_new_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230708TPHP_DIA_CA_SCA_pool_CV_violin_afterProcess.xlsx')
+
+#cv scatter plot
+pro_mean<-apply(2^df_new, 1, function(v){mean(v, na.rm = T)})
+df_new_cv$rank<-pro_mean
+p <- ggplot(df_new_cv, aes(x = log10(rank), y = cv))+geom_point()+
+  geom_hline(aes(yintercept=0.3), color="red",linetype="dashed") +
+  labs(x = 'log10Intensity', y = 'Coefficient of Variation') +
+  annotate("text", x = max(log10(df_new_cv$rank)) * 0.98, y = 0.4, label = 'CV = 0.3', color="red", size = 5, angle = 0) +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))
+ggsave('20230708TPHP_DIA_CA_SCA_pool_CV_scatter_violin_afterProcess.pdf',p,width = 6, height = 6)
+rio::export(df_new_cv, '20230708TPHP_DIA_CA_SCA_pool_CV_scatter_violin_afterProcess.xlsx')
+
+```
+
+### rep
+```{r}
+df1 <- pm %>% t() %>% as.data.frame() %>% rownames_to_column('FileName') %>%
+  right_join(df_info, ., by = 'FileName')
+
+info <- df1 %>% select(1:17)
+
+# get rep tags
+info <- info[, c('FileName', 'DIA_ID', 'Rep')]
+reps <- unique(na.omit(info$Rep))
+info %<>% dplyr::filter((`Rep` %in% reps) | (`DIA_ID` %in% reps))
+info[is.na(info$Rep), 'Rep'] <- info[is.na(info$Rep), 'DIA_ID']
+rep_id <- unique(info$Rep)
+
+df2 <- info %>% # with rep
+  filter(Rep %in% rep_id)
+df2$DIA_ID <- df2$Rep
+
+max_nrep <- info %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted); not mind warnings
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+df2 %<>% left_join(select(df1, -c('DIA_ID', 'Rep')), by = 'FileName')
+
+
+rep_id <- df2 %>% # rep_id (sorted)
+  count(DIA_ID) %>%
+  arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+'))) %>%
+  filter(n > 1) %>%
+  pull(DIA_ID)
+
+
+df2 <- df2 %>% # with rep
+  filter(DIA_ID %in% rep_id)
+
+df2 %<>% arrange(str_extract(DIA_ID, '[A-Z]+'), as.numeric(str_extract(DIA_ID, '\\d+')))
+df2$FileName %<>% factor(levels = unique(.), ordered = T)
+df2$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+max_nrep <- df2 %>% count(DIA_ID, sort = T) %>% summarise(max(n)) %>% pull() # max is 5
+df_rep <- df2 %>% # FileName of each rep_id (sorted)
+  dplyr::group_by(DIA_ID) %>%
+  summarise(FileNames = str_c(FileName, collapse = ';')) %>%
+  separate(FileNames, into = str_c('FileName', 1:max_nrep), sep = ';') %>%
+  arrange(as.numeric(str_extract(DIA_ID, '\\d+')))
+
+
+
+```
+
+#### barplot
+```{r}
+mat <- df2 %>% select(-(1:17)) %>% t %>% as.data.frame
+colnames(mat) <- df2$FileName
+Protein <- apply(mat, 2, function(col) sum(!is.na(col)))
+
+df_bar <- df2 %>%
+  select(FileName, DIA_ID) %>%
+  add_column(Protein = apply(mat, 2, function(col) sum(!is.na(col))),
+             .before = 3)
+df_bar$FileName %<>% factor(levels = unique(.), ordered = T)
+df_bar$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+
+df_bar2 <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  dplyr::mutate(Rep = str_c('rep', 1:n()))
+
+get_random_colors <- function(n, from_color_palette = brewer.pal(8, "Set2")){
+  my_colors <- sample(from_color_palette, 1)
+  i <- 1
+  while(length(my_colors) < n){
+    color <- sample(from_color_palette, 1)
+    if(color != my_colors[i]){
+      my_colors[i+1] <- color
+      i <- i + 1
+    }
+  }
+  return(my_colors)
+}
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = DIA_ID, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()
+ggsave('20230708TPHP_DIA_CA_SCA_pool_rep_barplot_afterProcess.pdf', p, width = 15, height = 16)
+
+my_colors <- get_random_colors(n = length(rep_id))
+p <- ggplot(df_bar2) +
+  aes(x = FileName, y = Protein, group = FileName, fill = DIA_ID) +
+  #geom_col(position = position_dodge(0.1)) +
+  geom_bar(stat="identity",position = 'dodge')+
+  geom_text(aes(label = df_bar2$Protein), # set the second columns as label of numbers
+            size = 3, hjust = 0.5, vjust = 0.5, position = "stack", color = 'black')+
+  scale_fill_manual(values = my_colors)+
+  scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  coord_flip() +
+  ggthemes::theme_base()# + theme(legend.position='none')
+ggsave('20230708TPHP_DIA_CA_SCA_pool_rep_barplot_byfilename_afterProcess.pdf', p, width = 15, height = 34)
+
+
+df_bar3 <- df_bar2 %>%
+  pivot_wider('Rep', names_from = 'DIA_ID', values_from = 'Protein') %>%
+  mutate_if(is.numeric, sort, na.last = T)
+
+mat_bar3 <- df_bar3 %>% column_to_rownames('Rep')
+for(i in nrow(mat_bar3):2){
+  mat_bar3[i , ] <- ifelse(is.na(mat_bar3[i, ] - mat_bar3[i-1, ]), 0, mat_bar3[i, ] - mat_bar3[i-1, ]) %>% unlist
+}
+mat_bar3 <- mat_bar3[nrow(mat_bar3):1, ]
+mat_bar3[mat_bar3 == 0] <- NA
+
+df_bar4 <- mat_bar3 %>% rownames_to_column('Rep')
+long_data <- pivot_longer(df_bar4, -Rep, names_to = "DIA_ID", values_to = "Protein")
+long_data$DIA_ID %<>% factor(levels = unique(.), ordered = T)
+long_data$Rep %<>% factor(levels = unique(.), ordered = T)
+
+p <- ggplot(data=long_data, mapping=aes(x=DIA_ID, y=Protein, fill=Rep))+
+  geom_bar(stat="identity",width=0.5,position='stack')+
+  # scale_fill_manual(values=colorRampPalette(c('#FFB6C1', '#ADD8E6'))(3))+
+  scale_fill_brewer(palette = "Spectral", direction = 1)+
+  # scale_fill_manual(values = my_colors[1:nrow(mat_bar3)])+
+  # scale_color_brewer(palette = "Set3", direction = 1) +
+  labs(x = "", y = "Protein number") +
+  # coord_flip() +
+  ggthemes::theme_base()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+ggsave('20230708TPHP_DIA_CA_SCA_pool_rep_barplot_stack_afterProcess.pdf', p, width = 20, height = 8)
+
+list(table1 = df_bar2, table2 = long_data) %>% 
+  rio::export('20230708TPHP_DIA_CA_SCA_pool_rep_protnum_afterProcess.xlsx')
+
+# max - min
+df_diff_prot <- df_bar %>%
+  dplyr::group_by(DIA_ID) %>%
+  summarise(`max-min` = max(Protein) - min(Protein))
+
+df_diff_prot %>% arrange(desc(`max-min`))
+plot(density(df_diff_prot$`max-min`))
+
+```
+
+
+
+####violinplot
+```{r}
+my_vios <- function(df_vios, ylim = NULL, flip = F){
+  meds <- na.omit(df_vios$CV)
+  median(meds, na.rm = T) # 0.1281786
+  # fivenum(meds) # 0.0000035079 0.0515402367 0.1281785918 0.2848757979 1.4121620499
+  
+  p <- ggplot(df_vios, aes(x = ID, y = CV, fill = ID))+
+    geom_jitter(color = '#CCCCCC', size=0.5, alpha=0.1) +
+    geom_violin(aes(fill = ID, color = ID)) +
+    geom_boxplot(aes(fill = ID), width=0.1, color = '#000000') +
+    stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+    labs(y = "Coefficient of Variation") +
+    theme(legend.position='none',
+          #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+          #legend.title = element_text(size=20,color="black"),
+          panel.grid.major =element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.line = element_line(colour = "black"))+
+    theme(panel.grid =element_blank())+
+    theme(axis.text = element_text(size = 20,color = "black"))+
+    #theme(axis.text.x = element_text(angle = 90))+
+    theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+    theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+    theme(axis.title.x=element_blank())+
+    theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+    #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+    # scale_fill_brewer(palette = "Set2")
+    # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+    # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+    scale_color_manual(values = rep("#FC8D62", length(unique(df_vios$ID)))) +
+    scale_fill_manual(values = rep("#FC8D62", length(unique(df_vios$ID))))
+  if (flip){
+    p <- p + labs(
+      #title = "",
+      #subtitle = "",
+      # caption = "",
+      # tag = "",
+      x = "Coefficient of Variation")
+  }
+  else{
+    p <- p + labs(
+      y = "Coefficient of Variation")+
+      theme(axis.text.x = element_text(angle = 90))
+  }
+  
+  if (flip){
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1.00), y = max(na.omit(df_vios$CV)) * 0.97, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }else{
+    p <- p + annotate("text", x = ceiling(length(unique(df_vios$ID)) * 1 / 15), y = max(na.omit(df_vios$CV)) * 1.05, label = paste0('Median value of CV: ', round(median(meds, na.rm = T), digits = 2)), color="black", size = 5, angle = 0)
+  }
+  if (flip)  {p <- p + coord_flip()}
+  if ( !is.null(ylim) ) { p <- p + ylim(ylim[1], ylim[2])}
+  return(p)
+}
+
+cv <- function(x){
+  sd(x, na.rm = T) / mean(x, na.rm = T)
+}
+
+
+
+df_cv <- df2 %>%
+  select(DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+
+# require(plyr)
+df_cv_raw <- df_cv
+df_cv_raw[, -1] <- 2 ^ df_cv_raw[, -1]
+df_vios <- plyr::ddply(as.data.frame(df_cv_raw), 'DIA_ID', function(dfsub){
+  data.frame(ID = unique(dfsub$DIA_ID),
+             CV = apply(dfsub[, -1], 2, cv))
+})
+df_vios %<>% drop_na()
+df_vios %<>% arrange(as.numeric(str_extract(ID, '\\d+')))
+df_vios$ID %<>% factor(levels = unique(.), ordered = T)
+p <- my_vios(df_vios)
+ggsave('20230708TPHP_DIA_CA_SCA_pool_rep_CV_violinplot_afterProcess.pdf', p, width = 20, height = 9)
+
+
+```
+
+
+#### correlation
+```{r}
+library(corrplot)
+# i <- 1
+# df_qc <- df2 %>%
+#   filter(DIA_ID == rep_id[i]) %>%
+#   select(FileName, DIA_ID, 22:12249)
+
+# correlation --------------
+reps <- rep_id
+length(reps) # 52
+df_qc <- df2 %>% select(FileName, DIA_ID, 22:ncol(df2)) %>%
+  filter(DIA_ID %in% rep_id)
+# df_qc[, -(1:2)] %<>% log2()
+
+uptri_reps <- c()
+cornames <- c()
+pdf('20230708TPHP_DIA_CA_SCA_pool_rep_log2_pearson_afterProcess.pdf',width = 45,height = 25)
+par(mfrow=c(4, 6))
+for(i in 1:length(reps)){
+  rep <- reps[i]
+  submat <- df_qc %>% dplyr::filter(DIA_ID == reps[i]) %>% dplyr::select(-(1:2)) %>% t %>% as.data.frame %>% drop_na
+  if((ncol(submat) < 2) | (nrow(submat)) <= 0) { next } # jump IDs with only one replicate
+  submat <- submat[apply(submat, 1, function(x){!all(is.na(x)) > 0}), ]
+  if(nrow(submat) == 0) { next } # jump IDs with all NA
+  # remove NA value
+  
+  df_cor <- submat[apply(submat, 1, function(x){!any(is.na(x))}), ]
+  colnames(df_cor) <- paste0(rep(rep, length(df_cor)), '-', seq(1, ncol(df_cor)))
+  new_cors <- cor(df_cor)
+  uptri_rep <- new_cors[upper.tri(new_cors)]
+  uptri_reps <- append(uptri_reps, median(uptri_rep, na.rm = T))
+  cornames[i] <- rep
+  
+  cex.before <- par("cex") 
+  par(cex = 4) 
+  corrplot(corr=cor(df_cor),order="AOE",type="upper", tl.cex = 2/par("cex"), cl.cex = 1/par("cex"))
+  corrplot(corr= cor(df_cor),add=TRUE, type="lower", method="number",order="AOE",diag=FALSE,tl.pos="n", cl.pos="n", tl.cex = 2/par("cex"), cl.cex = 1/par("cex", )
+           #, col="black"
+  )
+  par(cex = cex.before)
+}
+graphics.off()
+# names(uptri_reps) <- na.omit(cornames)
+median(uptri_reps, na.rm = T) # 0.9598073
+quantile(uptri_reps)
+#        0%       25%       50%       75%      100% 
+# 0.8832291 0.9578633 0.9697495 0.9825843 0.9888837 
+# sort(uptri_reps)
+# pdf('TPHP_DIA_CA-SCA_qu_limma_rep_log2_pearson_hist_20230707.pdf',width = 6,height = 4)
+# hist(uptri_reps, xlab = '', main = 'Pearson correlation')
+# my.dev.off()
+
+df_r <- data.frame(Type = "Rep", "Pearson's r" = uptri_reps, check.names = F)
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Rep', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(df_new)), color="black", size = 5, angle = 0)
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool_rep_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 6)
+rio::export(df_r, '20230708TPHP_DIA_CA_SCA_pool_rep_log2_pearson_violin_afterProcess.xlsx')
+
+```
+
+
+### combine pool and rep
+#### correlation
+```{r}
+df_r1 <- data.frame(Type = "Pool", "Pearson's r" = uptri_pool, check.names = F)
+df_r2 <- data.frame(Type = "Replicates", "Pearson's r" = uptri_reps, check.names = F)
+df_r <- rbind(df_r1, df_r2)
+
+p <- ggplot(df_r, aes(x = Type, y = `Pearson's r`, fill = Type))+
+  geom_jitter(color = '#AAAAAA', size=1.5, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(x = "", y = "Pearson's r") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(uptri_pool)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0)+
+  annotate("text", x = 'Replicates', y = max(na.omit(df_r$`Pearson's r`)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(uptri_reps)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+
+ggsave('20230708TPHP_DIA_CA_SCA_pool-rep_log2_pearson_violin_afterProcess.pdf', p, width = 6, height = 5)
+rio::export(df_r, '20230708TPHP_DIA_CA_SCA_pool-rep_log2_pearson_violin_afterProcess.xlsx')
+
+
+
+
+
+
+
+```
+
+#### CV
+```{r}
+df_vio1 <- data.frame(CV=pool1_cv, Type="Pool")
+df_vio2 <- data.frame(CV=df_vios$CV, Type="Replicates")
+df_vio <- rbind(df_vio1, df_vio2)
+
+p <- ggplot(df_vio, aes(x = Type, y = CV, fill = Type))+
+  # geom_jitter(color = '#CCCCCC', size=0.1, alpha=0.1) +
+  geom_violin(aes(fill = Type, color = Type)) +
+  geom_boxplot(aes(fill = Type), width=0.1, color = '#000000') +
+  # stat_summary(fun=mean, geom="point", size=2, color="#000000") +
+  labs(y = "Coefficient of Variation") +
+  theme(legend.position='none',
+        #legend.text = element_text(size = 20,color = "black"),legend.position = 'right',
+        #legend.title = element_text(size=20,color="black"),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"))+
+  theme(panel.grid =element_blank())+
+  theme(axis.text = element_text(size = 20,color = "black"))+
+  #theme(axis.text.x = element_text(angle = 90))+
+  theme(axis.text.x = element_text(size = 20,color = "black",angle=0))+
+  theme(plot.subtitle=element_text(size=25, hjust=0, color="black"))+
+  theme(axis.title.x=element_blank())+
+  theme(axis.title.y=element_text(size=22, hjust=0.5, color="black"))+
+  #scale_y_continuous(name='log2Ratio', breaks = seq(-3, 3, 1)) +
+  # scale_fill_brewer(palette = "Set2")
+  # scale_fill_manual(values = c(rep(brewer.pal(8, "Set2")[6])))
+  # scale_color_manual(values = c("#000000", "#000000", "#000000")) +
+  scale_color_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA")) +
+  scale_fill_manual(values = c("#8DA0CBCC", "#FC8D6299", "#66C2A5AA"))
+
+p <- p +
+  annotate("text", x = 'Pool', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of pool: ', sprintf('%.3f', median(df_vio1$CV)), '\nn = ', ncol(pool1)), color="black", size = 5, angle = 0) +
+  annotate("text", x = 'Replicates', y = max(na.omit(df_new_vio$CV)) * 1.01, label = paste0('Median of replicates: ', sprintf('%.3f', median(df_vio2$CV)), '\nn = ', length(reps)), color="black", size = 5, angle = 0)
+ggsave('20230708TPHP_DIA_CA_SCA_pool-rep_CV_violin_afterProcess.pdf', p, width = 6, height = 6)
+
+df_vio %>%
+  rownames_to_column('Protein') %>%
+  rio::export('20230708TPHP_DIA_CA_SCA_pool-rep_CV_violin_afterProcess.xlsx')
+
+```
+
+### ==t-SNE==
+```{r}
+ge.plot.tsne<-function(data,type,title="",label=NULL,seed=2023){
+  col2<-rep(brewer.pal(9,"Set1")[1:9],3)[1:4]
+  cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+  cl2 <- cl[match(type,row.names(cl)),1]
+  set2<-c(rep(0,times=4))
+  st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+  st2<-st[match(type,row.names(cl)),1]
+  df10 <- data
+  df10[is.na(df10)] <- 0 #
+  df10 <- t(apply(df10, 1, scale))  #
+  colnames(df10) <- type
+  set.seed(seed)
+  tsne <- Rtsne::Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+  pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+  if(is.null(label)){
+    par(mai=c(0.4,0.5,0.2,2.4))
+    plot(tsne$Y,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+    legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+           x.intersp=0.5,bty='n')
+  }else{
+    plot(tsne$Y,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+    text(tsne$Y,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+    legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+  }
+  dev.off()
+  
+  
+  return(tsne$Y)
+}
+
+pm_tsne <- t(pm)
+rownames(df_info) <- df_info$FileName
+file_info <- df_info[colnames(pm), ]
+type <- file_info$organ
+
+t="20230726_PUH_tsne_13394prot_1169samples_cancer_type"
+tsne<-ge.plot.tsne(pm_tsne,type=type,title=t)
+tsne_df<-as.data.frame(cbind(all1[,1:17],tsne))
+# rio::export(tsne_df, '20230710_PUH_tsne_1731samples_cancer_type_v2.xlsx')
+
+p <- ggplot(tsne_df) +
+  aes(x = X, y = Y, color = sample_type) +
+  geom_point(shape = "circle", size = 1.5) +
+  labs(x = "t-SNE 1", y = "t-SNE 2") +
+  guides(color = guide_legend(title = "Sample type")) +
+  scale_color_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3')) +
+  theme_minimal() +
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 20, color = "black"),
+        legend.title = element_text(size=20,color="black"),
+        panel.grid = element_blank(),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 20,color = "black"),
+        axis.text.x = element_text(size = 20,color = "black", angle = 0),
+        axis.title.x=element_text(size = 22, hjust = 0.5, color = "black"),
+        axis.title.y=element_text(size = 22, hjust = 0.5, color = "black"),
+        plot.subtitle=element_text(size = 25, hjust = 0, color = "black")
+  )
+
+p <- p +
+  stat_ellipse(aes(fill = sample_type), level = 0.8, geom = 'polygon', size = 0.5, alpha = 0.2) +
+  scale_fill_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3'))
+
+
+# canvas
+canvasXpress::canvasXpress(data=list(y=tsne_df[, c('X', 'Y')]),varAnnot=tsne_df %>% select(sample_type, anatomical_classification),scatterPlotMatrix=F,title='t-SNE',colorBy ='anatomical_classification', legendColumns=1,width = 1200,height=600)
+
+
+```
+
+
+
+### t-SNE 50missing matrix
+```{r}
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(writexl)
+library(plyr)
+library(Rtsne)
+library(RColorBrewer)
+
+sub_com <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230318_PUH_submatrix_combine_5_missing.csv')
+sub_com[str_detect(sub_com$organ, 'cervi'), 'organ'] <- 'cervix uteri'
+
+
+# #get abbreviations
+# df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+# h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+# sub_com$organ <- sapply(sub_com$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+# 
+# # CHANGE TO CANCER NAME
+# ht_organ2cancer <- c('GBM', 'COCA', 'CESC', 'ESCA', 'FTCA', 'GBCA', 'RC', 'HCC', 'DLBCL', 'THYM', 'LUCA', 'BRCA', 'MUT', 'OC', 'PACA', 'PECA', 'PRCA', 'READ', 'GIST', 'GC', 'TGCT', 'LARCA', 'THCA', 'TOCA', 'ENCA')
+# names(ht_organ2cancer) <- c('CE', 'CO', 'CU', 'ESO', 'FT', 'GB', 'KI', 'LI', 'LN', 'LTH', 'LU', 'MAG', 'MU', 'OV', 'PA', 'PEN', 'PR', 'REC', 'SI', 'ST', 'TE', 'THR', 'THY', 'TON', 'UTE')
+# sub_com$organ <- ht_organ2cancer[sub_com$organ]
+
+ht_organ2cancer <- c('Glioblastoma', 'Cervical carcinoma', 'Colon carcinoma', 'Esophageal carcinoma', 'Fallopian tube carcinoma', 'Gallbladder carcinoma', 'Renal carcinoma', 'Hepatocellular carcinoma', 'Lung carcinoma', 'Diffused large B-cell carcinoma', 'Breast carcinoma', 'Muscle tumor', 'Ovarian carcinoma', 'Pancreas carcinoma', 'Male genitalia carcinoma', 'Prostate carcinoma', 'Rectum carcinoma', 'Gastrointestinal stromal tumors', 'Gastric carcinoma', 'Testis carcinoma', 'Laryngocarcinoma', 'Thymoma and thymic carcinoma', 'Thyroid carcinoma', 'Tongue carcinoma', 'Endometrial carcinoma')
+names(ht_organ2cancer) <- c('brain', 'cervix uteri', 'colon', 'esophagus', 'fallopian tube', 'gall bladder', 'kidney', 'liver', 'lung', 'lymph node', 'mammary gland', 'muscle', 'ovary', 'pancreas', 'penis', 'prostate', 'rectum', 'small intestine', 'stomach', 'testis', 'throat', 'thymus', 'thyroid', 'tongue', 'uterus')
+sub_com$organ <- ht_organ2cancer[sub_com$organ]
+
+sub_com$sample_type %<>% str_to_sentence()
+sub_com$tissue_name %<>% str_to_sentence()
+
+
+# draw tsne for matrices generated using different NA cutoff
+# colors<-read_xlsx("D:/data/1project/TPL/2022/figure/PUH_tissue_colorset.xlsx")
+ge.plot.tsne<-function(data,type,title="",label=NULL){
+  col2<-rep(brewer.pal(9,"Set1")[1:9],3)[1:25]
+  cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+  cl2 <- cl[match(type,row.names(cl)),1]
+  set2<-c(rep(0,times=9),
+          rep(2,times=9),
+          rep(4,times=7))
+  st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+  st2<-st[match(type,row.names(cl)),1]
+  df10 <- data
+  df10[is.na(df10)] <- 0 #
+  df10 <- t(apply(df10, 1, scale))  #
+  colnames(df10) <- type
+  tsne <- Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+  pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+  if(is.null(label)){
+    par(mai=c(0.4,0.5,0.2,2.4))
+    plot(tsne$Y,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+    legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+           x.intersp=0.5,bty='n')
+  }else{
+    plot(tsne$Y,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+    text(tsne$Y,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+    legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+  }
+  dev.off()
+  
+  
+  return(tsne$Y)
+}
+
+# use organ
+set.seed(9)
+data<-sub_com
+t="20230726_PUH_submatrix_combine_05_missing_v2"
+label<-paste(data[,1:3],collapse = "_")
+type<-data$organ
+df<-t(data[,-c(1:6)])
+# dim(df)#11694 probes
+tsne<-ge.plot.tsne(df,type=type,title=t)
+colnames(tsne) <- c('tSNE1', 'tSNE2')
+
+# unload environment
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(tidyverse)
+library(magrittr)
+
+tsne_df<-as.data.frame(cbind(sub_com,tsne))
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+my_shapes <- c(1, 2, 6, 3, 4, 15, 17:19)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(tsne_df) +
+  geom_point(aes(x = tSNE1, y = tSNE2, color = organ, shape = organ), size = 1.5) +
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(x = "t-SNE 1", y = "t-SNE 2") +
+  # guides(color = guide_legend(title = "Cancer name")) +
+  theme_minimal() +
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 20, color = "black"),
+        legend.title = element_text(size=20,color="black"),
+        panel.grid = element_blank(),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 20,color = "black"),
+        axis.text.x = element_text(size = 20,color = "black", angle = 0),
+        axis.title.x=element_text(size = 22, hjust = 0.5, color = "black"),
+        axis.title.y=element_text(size = 22, hjust = 0.5, color = "black"),
+        plot.subtitle=element_text(size = 25, hjust = 0, color = "black")
+  )
+ggsave('PUH_CA_50NA_tSNE_v1_20230726.pdf', p, width = 20, height = 20)
+ggsave('PUH_CA_50NA_tSNE_v1_wolegend_20230726.pdf', p + theme(legend.position = 'none'), width = 8, height = 8)
+
+
+tsne_df_ellipse <- tsne_df %>% select(organ, tSNE1, tSNE2)
+tsne_df_ellipse$draw <- NA
+tsne_df_ellipse[tsne_df_ellipse$organ %in% c("Breast carcinoma", "Cervical carcinoma", "Endometrial carcinoma", "Fallopian tube carcinoma", "Ovarian carcinoma"), 'draw'] <- 'Gynecological'
+tsne_df_ellipse[tsne_df_ellipse$organ %in% c("Esophageal carcinoma", "Gastric carcinoma", "Colon carcinoma", "Rectum carcinoma", "Pancreas carcinoma"), 'draw'] <- 'Digestive' # remove gall bladder, gastrointestinal stromal tumors
+p <- p +
+  stat_ellipse(data = tsne_df_ellipse %>% filter(!is.na(draw)), aes(x = tSNE1, y = tSNE2, fill = draw), level = 0.8, geom = 'polygon', size = 0.5, alpha = 0.2) +
+  scale_fill_manual(values = c(Gynecological = '#E41A1C', Digestive = '#377EB8'))
+# , Normal =  '#4DAF4A', Fetal = '#984EA3')
+ggsave('PUH_CA_50NA_tSNE_v2_20230726.pdf', p, width = 20, height = 20)
+ggsave('PUH_CA_50NA_tSNE_v2_wolegend_20230726.pdf', p + theme(legend.position = 'none'), width = 8, height = 8)
+
+
+canvasXpress::canvasXpress(data=list(y=tsne_df[, c('tSNE1', 'tSNE2')]),varAnnot=tsne_df %>% select(organ, sample_type),scatterPlotMatrix=F,title='t-SNE',colorBy ='organ', legendColumns=1,width = 1200,height=600)
+
+```
+
+
+### prot number 50missing matrix
+```{r}
+df_count <- plyr::ddply(sub_com, c('organ', 'sample_type'), function(dfsub){
+  matsub <- dfsub[, -(1:6)]
+  protein_number <- apply(matsub, 1, function(x) sum(!is.na(x)))
+  data.frame(dfsub[, 1:6], protein_number)
+})
+
+
+
+p <- ggplot(df_count) +
+  aes(x = organ, y = protein_number, colour = sample_type) +
+  geom_jitter(alpha = 0.4, size = 0.1) +
+  geom_boxplot(outlier.shape = NA, width = 0.4, fill = 'white') +
+  scale_color_manual(values = c(Adjacent = "#1268E2", Carcinoma = "#C82222")) +
+  labs(
+    x = '', y = '# Proteins', title = ''
+  )+
+  theme(#panel.grid = element_blank(),
+        #panel.grid.major = element_blank(),
+        #panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'none',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 0),
+        #axis.text.x = element_blank(),
+        # axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 0),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        # axis.ticks.y = element_blank()
+  ) +
+  coord_flip()
+
+ggsave('PUH_CA_50NA_protein_number_20230726.pdf', p, width = 7, height = 10)
+
+
+```
+
+
+# ====t-SNE for all tissues without preprocess====
+```{r}
+pm <- pm0 <- read.delim('20220701TPHP_1783file_117pool_ProteinMatrix.tsv', check.names = F)
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm %>% rownames_to_column('FileName')
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+colnames(pm) <- df$FileName
+
+
+
+```
+
+
+
+# t-SNE for normal tissues without preprocess====
+```{r}
+#  1783 files  117 pool  protein matrix
+pm <- read.delim('20220701TPHP_1783file_117pool_ProteinMatrix.tsv', check.names = F)
+dim(pm) # 1900 13479
+pm %<>% removeRowsAllNa() %>% removeColsAllNa()
+dim(pm) # 13304   731
+pm %<>% select(-str_subset(colnames(pm), 'iRT')) # remove any iRT1-11
+
+
+# df_info <- readxl::read_excel('//172.16.13.114/share/members/jiangwenhao/TPHP/preparation/20220706TPHP_1781file_info_edited_v2.8.xlsx')
+df_info <- rio::import('//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx')
+pool_name <- str_subset(rownames(pm), 'pool')
+df_info <- data.frame(FileName = pool_name) %>% bind_rows(df_info, .)
+df_pm <- pm %>% rownames_to_column('FileName')
+
+
+df <- inner_join(df_info, df_pm, by = 'FileName')
+colnames(df)[1:18]
+df_info <- df %>% select(1:17)
+
+pm <- df %>% select(-(1:17)) %>% t() %>% as.data.frame()
+colnames(pm) <- df$FileName
+
+df_info1 <- df_info %>% filter(sample_type == 'Normal')
+pm1 <- pm[, df_info1$FileName]
+pm1 %<>% removeRowsAllNa()
+
+# data<-pm
+# label<-paste(data[,1:3],collapse = "_")
+type<-df_info1$anatomical_classification
+M <- log2(t(pm1))
+M[is.na(M)] <- 0
+M <- scale(M)
+
+set.seed(9)
+tsne <- Rtsne::Rtsne(M, dims = 2, perplexity = (nrow(M)-1)/3-1, verbose = T , check_duplicates = FALSE)
+colnames(tsne$Y) <- c('tSNE1', 'tSNE2')
+tsne_df<-as.data.frame(cbind(df_info1, tsne$Y))
+
+
+# unload environment
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(tidyverse)
+library(magrittr)
+
+
+my_colors <- c('#7C0823', '#D8894E','#55BC6D', '#368FC6', '#9D7DDB', '#000000', '#888888')
+my_shapes <- c(1, 2, 6, 3, 4, 15, 17:19)
+shape_color_pairs <- expand.grid(my_shapes, my_colors)
+
+p <- ggplot(tsne_df) +
+  geom_point(aes(x = tSNE1, y = tSNE2, color = anatomical_classification, shape = anatomical_classification), size = 1.5) +
+  scale_shape_manual(values = shape_color_pairs[, 1])+
+  scale_color_manual(values = as.character(shape_color_pairs[, 2]))+
+  labs(x = "t-SNE 1", y = "t-SNE 2") +
+  # guides(color = guide_legend(title = "Cancer name")) +
+  theme_minimal() +
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 20, color = "black"),
+        legend.title = element_text(size=20,color="black"),
+        panel.grid = element_blank(),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 20,color = "black"),
+        axis.text.x = element_text(size = 20,color = "black", angle = 0),
+        axis.title.x=element_text(size = 22, hjust = 0.5, color = "black"),
+        axis.title.y=element_text(size = 22, hjust = 0.5, color = "black"),
+        plot.subtitle=element_text(size = 25, hjust = 0, color = "black")
+  )
+ggsave('PUH_normal_tSNE_v1_20230726.pdf', p, width = 15, height = 15)
+ggsave('PUH_normal_tSNE_v1_wolegend_20230726.pdf', p + theme(legend.position = 'none'), width = 6, height = 6)
+
+
+```
+
+
+
+# t-SNE for cancer tissues with after 50NA filtered in subgroups
+```{r}
+
+
+
+```
+

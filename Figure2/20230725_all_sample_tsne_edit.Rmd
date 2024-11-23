@@ -1,0 +1,3471 @@
+---
+title: "20230712_all_sample_tsne"
+author: ""
+date: "2023-07-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/all_sample_tSNE/')
+
+```
+
+# 0. == 20230710-20230712 recording ==
+```{r}
+# library(readxl)
+# library(ggplot2)
+
+library(magrittr)
+library(tidyverse)
+library(Rtsne)
+library(RColorBrewer)
+
+
+############### 1. all samples t-SNE -------------------------
+
+# 1.1 t-SNE ---------------------------------------------------------------
+
+
+all<-readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20220701TPHP_1783file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
+head(colnames(all),n=25)
+# info<-read_xlsx("//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+info<-readxl::read_xlsx("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+table(all$cancer_type)
+# adjacent carcinoma    Normal 
+# 543       540       641 
+# colors<-read_xlsx("D:/data/1project/TPL/2022/figure/PUH_tissue_colorset.xlsx")
+
+ge.plot.tsne<-function(data,type,title="",label=NULL,seed=2023){
+  col2<-rep(brewer.pal(9,"Set1")[1:9],3)[1:4]
+  cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+  cl2 <- cl[match(type,row.names(cl)),1]
+  set2<-c(rep(0,times=4))
+  st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+  st2<-st[match(type,row.names(cl)),1]
+  df10 <- data
+  df10[is.na(df10)] <- 0 #
+  df10 <- t(apply(df10, 1, scale))  #
+  colnames(df10) <- type
+  set.seed(seed)
+  tsne <- Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+  pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+  if(is.null(label)){
+    par(mai=c(0.4,0.5,0.2,2.4))
+    plot(tsne$Y,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+    legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+           x.intersp=0.5,bty='n')
+  }else{
+    plot(tsne$Y,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+    text(tsne$Y,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+    legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+  }
+  dev.off()
+  
+  
+  return(tsne$Y)
+}
+
+all1<-merge(info,all[,c(1,18:ncol(all))],by="FileName",all.X=T)
+head(colnames(all1),n=25)
+type<-all1$sample_type
+df<-apply(t(all1[,-c(1:21)]),c(1,2),as.numeric)
+class(df)
+colnames(df)<-all1$FileName
+df[1,2]
+t="20230710_PUH_tsne_1731samples_cancer_type_v2"
+# dim(df)#11694 probes
+tsne<-ge.plot.tsne(df,type=type,title=t)
+tsne_df<-as.data.frame(cbind(all1[,1:17],tsne))
+rio::export(tsne_df, '20230710_PUH_tsne_1731samples_cancer_type_v2.xlsx')
+
+nafill <- min(df, na.rm = T) * 0.5
+df[is.na(df)] <- nafill
+df %>% t() %>% as.data.frame() %>% 
+  rownames_to_column('FileName') %>% 
+  select(-contains('iRT')) %>% 
+  rio::export('PUH_protein_matrix_1781_13477.tsv')
+
+# New plot with stat_ellipse
+# change sample type labels
+tsne_df[tsne_df$sample_type == 'carcinoma', 'sample_type'] <- 'Cancerous'
+tsne_df[tsne_df$sample_type == 'adjacent', 'sample_type'] <- 'Noncancerous'
+tsne_df$sample_type %<>% factor(levels = c('Cancerous', 'Noncancerous', 'Normal', 'Fetal'))
+tsne_df %<>% rename(X = `1`, Y = `2`)
+
+p <- ggplot(tsne_df) +
+  aes(x = X, y = Y, color = sample_type) +
+  geom_point(shape = "circle", size = 1.5) +
+  labs(x = "t-SNE 1", y = "t-SNE 2") +
+  guides(color = guide_legend(title = "Sample type")) +
+  scale_color_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3')) +
+  theme_minimal() +
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 20, color = "black"),
+        legend.title = element_text(size=20,color="black"),
+        panel.grid = element_blank(),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 20,color = "black"),
+        axis.text.x = element_text(size = 20,color = "black", angle = 0),
+        axis.title.x=element_text(size = 22, hjust = 0.5, color = "black"),
+        axis.title.y=element_text(size = 22, hjust = 0.5, color = "black"),
+        plot.subtitle=element_text(size = 25, hjust = 0, color = "black")
+  )
+
+p <- p +
+  stat_ellipse(aes(fill = sample_type), level = 0.8, geom = 'polygon', size = 0.5, alpha = 0.2) +
+  scale_fill_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3'))
+
+ggsave('20230710_PUH_1731samples_13479proteins_tSNE_sampleType_ellipse.pdf', p, height = 8, width = 11)
+
+
+
+
+
+
+# 1.2 Focus on brain ------------------------------------------------------
+rownames(tsne) <- 1:nrow(tsne)
+canvasXpress::canvasXpress(data=list(y=tsne),varAnnot=tsne_df %>% select(sample_type),scatterPlotMatrix=F,title='t-SNE',colorBy ='sample_type', legendColumns=1,width = 1200,height=600)
+
+# brain only
+df_tsne_brain <- tsne_df %>% filter(anatomical_classification == 'brain')
+canvasXpress::canvasXpress(data=list(y=df_tsne_brain[, c('X', 'Y')]),varAnnot=df_tsne_brain %>% select(sample_type, tissue_name),scatterPlotMatrix=F,title='t-SNE',colorBy ='tissue_name', legendColumns=1,width = 1200,height=600)
+
+# brain remove glioblastoma
+df_tsne_brain %<>% filter(tissue_name != 'glioblastoma')
+canvasXpress::canvasXpress(data=list(y=df_tsne_brain[, c('X', 'Y')]),varAnnot=df_tsne_brain %>% select(sample_type, tissue_name),scatterPlotMatrix=F,title='t-SNE',colorBy ='tissue_name', legendColumns=1,width = 1200,height=600)
+
+# compare theses samples to others
+files_brain <- df_tsne_brain$FileName
+na_ratio <- apply(df, 1, function(x) sum(is.na(x)) / length(x))
+quantile(na_ratio)
+# 0%       25%       50%       75%      100% 
+# 0.0000000 0.1558113 0.5137563 0.8747894 0.9994385
+
+
+# 1.2.1 NA imputation-------------------------------------------------------
+glio_index <- which(colnames(df) %in% (tsne_df %>% filter(tissue_name == 'glioblastoma') %>% pull(FileName)))
+nafilling <- min(df, na.rm = T) * 0.8
+mat <- df[, -glio_index]
+mat[is.na(mat)] <- nafilling
+
+files_brain_index <- which(colnames(mat) %in% files_brain)
+log2fcs <- c()
+pvalues_wilcox <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- mat[i, files_brain_index]
+  x2 <- mat[i, -files_brain_index]
+  log2fcs[i] <- log2(mean(x1) / mean(x2))
+  # pvalues_t[i] <- t.test(x1, x2, paired = F, var.equal = F)$p.value
+  pvalues_wilcox[i] <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+}
+df_ttest <- data.frame(Protein = rownames(mat), log2FC = log2fcs, P = pvalues_wilcox)
+df_ttest$adjP <- p.adjust(df_ttest$P, method="bonferroni")
+df_ttest$isSignificant <- ifelse(abs(df_ttest$log2FC) >= log2(2) & df_ttest$adjP < 0.05, T, F)
+df_ttest$Regulation <- ifelse(df_ttest$log2FC > 0, 'Up', 'Down')
+quantile(df_ttest$adjP)
+
+p <- ggplot() +
+  geom_point(data = df_ttest %>% filter(!isSignificant), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = 'gray', alpha = 0.5) +
+  geom_point(data = df_ttest %>% filter(isSignificant & Regulation == 'Up'), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = '#BC3C29', alpha = 0.8) +
+  geom_point(data = df_ttest %>% filter(isSignificant & Regulation == 'Down'), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = '#0072B5', alpha = 0.8) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, lwd = 0.6, alpha = 0.8) +
+  geom_vline(xintercept = log2(2) * c(1, -1),lty = 4,lwd = 0.6, alpha = 0.8) +
+  theme_classic() +
+  theme(legend.position = 'right',
+        panel.border = element_rect(fill = NA, color = "black", size = 0.5, linetype = "solid"),
+        axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.45),
+  )+
+  labs(x = "log2 (Fold change)", y = "-log10 (Adj. P value)")
+  # annotate("text", x = -3, y = 7, label = "Down-regulated:",size = 5)
+
+
+# 1.2.2 NA omit, not remove-------------------------------------------
+mat <- df[, -glio_index]
+files_brain_index <- which(colnames(mat) %in% files_brain)
+condition1 <- apply(mat[, files_brain_index], 1, function(x) any(!is.na(x))) # any brain not NA
+condition2 <- apply(mat[, -files_brain_index], 1, function(x) any(!is.na(x))) # any others not NA
+mat <- mat[condition1 & condition2, ]
+dim(mat) # 10252 1757
+
+log2fcs <- c()
+pvalues_wilcox <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- na.omit(mat[i, files_brain_index])
+  x2 <- na.omit(mat[i, -files_brain_index])
+  log2fcs[i] <- log2(mean(x1) / mean(x2))
+  # pvalues_t[i] <- t.test(x1, x2, paired = F, var.equal = F)$p.value
+  pvalues_wilcox[i] <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+}
+df_wilcox_test <- data.frame(Protein = rownames(mat), log2FC = log2fcs, P = pvalues_wilcox)
+df_wilcox_test$adjP <- p.adjust(df_wilcox_test$P, method="BH")
+df_wilcox_test$isSignificant <- ifelse(abs(df_wilcox_test$log2FC) >= log2(2) & df_wilcox_test$adjP < 0.05, T, F)
+df_wilcox_test$Regulation <- ifelse(df_wilcox_test$log2FC > 0, 'Up', 'Down')
+quantile(df_wilcox_test$adjP)
+
+p <- ggplot() +
+  geom_point(data = df_wilcox_test %>% filter(!isSignificant), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = 'gray', alpha = 0.5) +
+  geom_point(data = df_wilcox_test %>% filter(isSignificant & Regulation == 'Up'), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = '#BC3C29', alpha = 0.8) +
+  geom_point(data = df_wilcox_test %>% filter(isSignificant & Regulation == 'Down'), aes(x = log2FC, y = -log10(adjP), size = abs(log2FC)), color = '#0072B5', alpha = 0.8) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, lwd = 0.6, alpha = 0.8) +
+  geom_vline(xintercept = log2(2) * c(1, -1),lty = 4,lwd = 0.6, alpha = 0.8) +
+  theme_classic() +
+  theme(legend.position = 'right',
+        panel.border = element_rect(fill = NA, color = "black", size = 0.5, linetype = "solid"),
+        axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.45),
+  )+
+  labs(x = "log2 (Fold change)", y = "-log10 (Adj. P value)")
+# annotate("text", x = -3, y = 7, label = "Down-regulated:",size = 5)
+
+ggsave('PUH_allSample_brain_vs_others_volcano_20230710.pdf', p, width = 10, height = 10)
+
+rio::export(df_wilcox_test, 'PUH_allSample_brain_vs_others_volcano_20230710.xlsx')
+
+prot_brain_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein)
+
+
+
+# 1.2.2.1 GO enrichment ---------------------------------------------------
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+#BP
+goall_PBPM_BP <- enrichGO(prot_brain_up, OrgDb = org.Hs.eg.db,
+                          ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOBP <- goall_PBPM_BP[]
+df_GOBP$pvalue <- -log10(df_GOBP$pvalue)
+df_GOBP %<>% arrange(desc(pvalue))
+df_GOBP$Count <- as.factor(df_GOBP$Count)
+df_GOBP$Description %<>% str_to_sentence()
+# library(ggcharts)
+GO_BP <- ggplot(df_GOBP[1:20, ],aes(pvalue,Description))+
+  geom_point(aes(size=Count),colour="#BC3C29FF")+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_y_discrete(limits=rev(df_GOBP$Description[1:20]))+
+  scale_color_manual(values=c("#BC3C29FF"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+
+ggsave('PUH_allSample_brain_vs_others_DEPup_GOBP_top20.pdf', GO_BP, width = 10, height = 10)
+rio::export(df_GOBP, 'PUH_allSample_brain_vs_others_DEPup_GOBP.xlsx')
+
+
+#CC
+goall_PCCM_CC <- enrichGO(prot_brain_up, OrgDb = org.Hs.eg.db,
+                          ont = "CC", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOCC <- goall_PCCM_CC[]
+df_GOCC$pvalue <- -log10(df_GOCC$pvalue)
+df_GOCC %<>% arrange(desc(pvalue))
+df_GOCC$Count <- as.factor(df_GOCC$Count)
+df_GOCC$Description %<>% str_to_sentence()
+# library(ggcharts)
+GO_CC <- ggplot(df_GOCC[1:20, ],aes(pvalue,Description))+
+  geom_point(aes(size=Count),colour="#BC3C29FF")+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Cellular Components")+
+  scale_y_discrete(limits=rev(df_GOCC$Description[1:20]))+
+  scale_color_manual(values=c("#BC3C29FF"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+
+ggsave('PUH_allSample_brain_vs_others_DEPup_GOCC_top20.pdf', GO_CC, width = 10, height = 10)
+rio::export(df_GOCC, 'PUH_allSample_brain_vs_others_DEPup_GOCC.xlsx')
+
+#CC
+goall_PCCM_CC <- enrichGO(prot_brain_up, OrgDb = org.Hs.eg.db,
+                          ont = "CC", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOCC <- goall_PCCM_CC[]
+df_GOCC$pvalue <- -log10(df_GOCC$pvalue)
+df_GOCC %<>% arrange(desc(pvalue))
+df_GOCC$Count <- as.factor(df_GOCC$Count)
+df_GOCC$Description %<>% str_to_sentence()
+# library(ggcharts)
+GO_CC <- ggplot(df_GOCC[1:20, ],aes(pvalue,Description))+
+  geom_point(aes(size=Count),colour="#BC3C29FF")+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Cellular Components")+
+  scale_y_discrete(limits=rev(df_GOCC$Description[1:20]))+
+  scale_color_manual(values=c("#BC3C29FF"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+
+ggsave('PUH_allSample_brain_vs_others_DEPup_GOCC_top20.pdf', GO_CC, width = 10, height = 10)
+rio::export(df_GOCC, 'PUH_allSample_brain_vs_others_DEPup_GOCC.xlsx')
+
+#MF
+goall_PMFM_MF <- enrichGO(prot_brain_up, OrgDb = org.Hs.eg.db,
+                          ont = "MF", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOMF <- goall_PMFM_MF[]
+df_GOMF$pvalue <- -log10(df_GOMF$pvalue)
+df_GOMF %<>% arrange(desc(pvalue))
+df_GOMF$Count <- as.factor(df_GOMF$Count)
+df_GOMF$Description %<>% str_to_sentence()
+# library(ggcharts)
+GO_MF <- ggplot(df_GOMF[1:20, ],aes(pvalue,Description))+
+  geom_point(aes(size=Count),colour="#BC3C29FF")+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Cellular Components")+
+  scale_y_discrete(limits=rev(df_GOMF$Description[1:20]))+
+  scale_color_manual(values=c("#BC3C29FF"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+
+ggsave('PUH_allSample_brain_vs_others_DEPup_GOMF_top20.pdf', GO_MF, width = 14, height = 10)
+rio::export(df_GOMF, 'PUH_allSample_brain_vs_others_DEPup_GOMF.xlsx')
+
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(Rtsne)
+library(RColorBrewer)
+
+
+# 1.3 Focus on differentiation --------------------------------------------
+
+# 1.3.1 NA omit, not remove -----------------------------------------------
+# remove brain samples
+brain_index <- which(colnames(df) %in% (tsne_df %>% filter(anatomical_classification == 'brain') %>% pull(FileName)))
+mat <- df[, -brain_index]
+dim(mat) # 13479  1683
+
+f_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Fetal') %>% pull(FileName)))
+c_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Cancerous') %>% pull(FileName)))
+nc_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Noncancerous') %>% pull(FileName)))
+n_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Normal') %>% pull(FileName)))
+
+condition1 <- apply(mat[, f_index], 1, function(x) any(!is.na(x))) # any fetal not NA
+condition2 <- apply(mat[, c_index], 1, function(x) any(!is.na(x))) # any cancerous not NA
+condition3 <- apply(mat[, nc_index], 1, function(x) any(!is.na(x))) # any noncancerous not NA
+condition4 <- apply(mat[, n_index], 1, function(x) any(!is.na(x))) # any normal not NA
+mat <- mat[condition1 & condition2 & condition3 & condition4, ]
+dim(mat) # 12123  1683
+
+log2fc_f.c <- log2fc_c.nc <- log2fc_nc.n <- c()
+pvalues_wilcox_f.c <- pvalues_wilcox_c.nc <- pvalues_wilcox_nc.n <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- na.omit(mat[i, f_index])
+  x2 <- na.omit(mat[i, c_index])
+  x3 <- na.omit(mat[i, nc_index])
+  x4 <- na.omit(mat[i, n_index])
+  
+  log2fc_f.c[i] <- log2(mean(x1) / mean(x2))
+  log2fc_c.nc[i] <- log2(mean(x2) / mean(x3))
+  log2fc_nc.n[i] <- log2(mean(x3) / mean(x4))
+  pvalues_wilcox_f.c[i] <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+  pvalues_wilcox_c.nc[i] <- wilcox.test(x2, x3, paired = F, var.equal = F)$p.value
+  pvalues_wilcox_nc.n[i] <- wilcox.test(x3, x4, paired = F, var.equal = F)$p.value
+}
+
+df_wilcox_test <- data.frame(
+  Protein = rownames(mat),
+  log2FC_f.c = log2fc_f.c,
+  log2FC_c.nc = log2fc_c.nc,
+  log2FC_nc.n = log2fc_nc.n,
+  P_f.c = pvalues_wilcox_f.c,
+  P_c.nc = pvalues_wilcox_c.nc,
+  P_nc.n = pvalues_wilcox_nc.n
+)
+
+df_wilcox_test$adjP_f.c <- p.adjust(df_wilcox_test$P_f.c, method="BH")
+df_wilcox_test$adjP_c.nc <- p.adjust(df_wilcox_test$P_c.nc, method="BH")
+df_wilcox_test$adjP_nc.n <- p.adjust(df_wilcox_test$P_nc.n, method="BH")
+
+p_significant <- df_wilcox_test %>% select(contains('adjP')) %>% apply(1, function(x) all(x < 0.05)) # wheather adjp < 0.05
+fc_significant <- df_wilcox_test %>% select(contains('log2FC')) %>% apply(1, function(x) {(all(abs(x) >= log2(1.5))) & (length(unique(sign(x))) == 1)}) # wheather |FC| >= 1.5 and with the same signature
+df_wilcox_test$isSignificant <- ifelse(p_significant & fc_significant, T, F)
+df_wilcox_test$Regulation <- ifelse(df_wilcox_test$log2FC_f.c > 0, 'Up', 'Down')
+df_wilcox_test[!df_wilcox_test$isSignificant, 'Regulation'] <- NA # cannot describe insignificance
+table(df_wilcox_test$isSignificant)
+# FALSE  TRUE 
+# 12041    82 
+
+rio::export(df_wilcox_test, 'PUH_allSample_differentiation_20230711.xlsx')
+
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 1
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 81
+
+
+
+# 1.3.2 NA omit, not remove; use compare_mean() ---------------------------
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+
+df_compare_mean <- as.data.frame(t(mat)) %>% rownames_to_column('FileName')
+df_compare_mean %<>% add_column(Group = NA, .before = 2)
+df_compare_mean[f_index, 'Group'] <- 'Fetal'
+df_compare_mean[c_index, 'Group'] <- 'Cancerous'
+df_compare_mean[nc_index, 'Group'] <- 'Noncancerous'
+df_compare_mean[n_index, 'Group'] <- 'Normal'
+
+df_p_ls <- list()
+for(j in 3:ncol(df_compare_mean)){
+  cat(j, '...\r')
+  dfsub <- df_compare_mean %>% select(2, all_of(j))
+  prot_name <- colnames(dfsub)[2]
+  colnames(dfsub)[2] <- 'Protein'
+  my_comparisons <- list(c('Fetal', 'Cancerous'), c('Cancerous', 'Noncancerous'), c('Noncancerous', 'Normal'))
+  df_p <- plyr::ldply(my_comparisons, function(comp){
+    x1 <- na.omit(dfsub %>% filter(Group == comp[1]) %>% pull(Protein))
+    x2 <- na.omit(dfsub %>% filter(Group == comp[2]) %>% pull(Protein))
+    p <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+    data.frame(Protein = prot_name, Group1 = comp[1], Group2 = comp[2], p = p) %>% return()
+  })
+  df_p$p.adj <- p.adjust(df_p$p, method = 'BH')
+  df_p_ls[[j-2]] <- df_p
+  # ggpubr::compare_means(formula = Protein ~ Group, data = dfsub, method = 'wilcox.test', p.adjust.method = 'BH', comparisons = my_comparisons)
+}
+names(df_p_ls) <- colnames(df_compare_mean)[-(1:2)]
+df_test <- plyr::ldply(df_p_ls)
+df_test %<>% mutate(Protein = .id, .id = NULL)
+
+df_test$Group1 <- sapply(df_test$Group1, function(x) switch(x, Fetal = 'f.', Cancerous = 'c.', Noncancerous = 'nc.'))
+df_test$Group2 <- sapply(df_test$Group2, function(x) switch(x, Cancerous = 'c', Noncancerous = 'nc', Normal = 'n'))
+df_test$Pair_P <- str_c('P_', df_test$Group1, df_test$Group2)
+df_test$Pair_adjP <- str_c('adjP_', df_test$Group1, df_test$Group2)
+df_test %<>% select(-Group1, -Group2)
+df_test1 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_P', values_from = 'p')
+df_test2 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_adjP', values_from = 'p.adj')
+df_wilcox_test <- df_test1 %>% left_join(df_test2, by = 'Protein')
+
+log2fc_f.c <- log2fc_c.nc <- log2fc_nc.n <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- na.omit(mat[i, f_index])
+  x2 <- na.omit(mat[i, c_index])
+  x3 <- na.omit(mat[i, nc_index])
+  x4 <- na.omit(mat[i, n_index])
+  
+  log2fc_f.c[i] <- log2(mean(x1) / mean(x2))
+  log2fc_c.nc[i] <- log2(mean(x2) / mean(x3))
+  log2fc_nc.n[i] <- log2(mean(x3) / mean(x4))
+}
+df_wilcox_test$log2FC_f.c <- log2fc_f.c
+df_wilcox_test$log2FC_c.nc <- log2fc_c.nc
+df_wilcox_test$log2FC_nc.n <- log2fc_nc.n
+
+p_significant <- df_wilcox_test %>% select(contains('adjP')) %>% apply(1, function(x) all(x < 0.05)) # wheather adjp < 0.05
+fc_significant <- df_wilcox_test %>% select(contains('log2FC')) %>% apply(1, function(x) {(all(abs(x) >= log2(1.2))) & (length(unique(sign(x))) == 1)}) # wheather |FC| >= 1.5 and with the same signature
+df_wilcox_test$isSignificant <- ifelse(p_significant & fc_significant, T, F)
+df_wilcox_test$Regulation <- ifelse(df_wilcox_test$log2FC_f.c > 0, 'Up', 'Down')
+df_wilcox_test[!df_wilcox_test$isSignificant, 'Regulation'] <- NA # cannot describe insignificance
+table(df_wilcox_test$isSignificant)
+# FALSE  TRUE 
+# 11871   252 
+
+rio::export(df_wilcox_test, 'PUH_allSample_differentiation_v2_20230711.xlsx')
+
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 35
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 217
+
+
+# 1.3.2.1 GO enrichment ---------------------------------------------------
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+#BP
+goall_PBPM_BP_up <- enrichGO(prot_diff_up, OrgDb = org.Hs.eg.db,
+                             ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOBP_up <- goall_PBPM_BP_up[]
+goall_PBPM_BP_down <- enrichGO(prot_diff_down, OrgDb = org.Hs.eg.db,
+                               ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOBP_down <- goall_PBPM_BP_down[]
+df_GOBP <- plyr::ldply(list(Up = df_GOBP_up, Down = df_GOBP_down), .id = 'Regulation')
+df_GOBP$pvalue <- -log10(df_GOBP$pvalue)
+df_GOBP$pvalue <- ifelse(df_GOBP$Regulation == 'Up', df_GOBP$pvalue, -df_GOBP$pvalue)
+df_GOBP %<>% arrange(desc(pvalue))
+# df_GOBP$Count <- as.factor(df_GOBP$Count)
+# df_GOBP$Description %<>% str_to_sentence()
+
+# library(ggcharts)
+quantile(df_GOBP$pvalue)
+GO_BP <- ggplot(df_GOBP,aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP$Description))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_FCNcN_GOBP.pdf', GO_BP, width = 20, height = 30)
+rio::export(df_GOBP, 'PUH_allSample_differentiation_FCNcN_DEP_GOBP.xlsx')
+
+GO_BP <- ggplot((df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP))),aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP)) %>% pull(Description)))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_FCNcN_DEP_GOBP_top20UpDown.pdf', GO_BP, width = 12, height = 10)
+
+
+GO_BP <- ggplot((df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP))),aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP)) %>% pull(Description)))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black",angle=45,hjust=1),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold")) +
+  coord_flip()
+ggsave('PUH_allSample_differentiation_FCNcN_DEP_GOBP_top20UpDown_flip.pdf', GO_BP, width = 20, height = 10)
+
+
+
+# 1.3.2.2 heatmap ---------------------------------------------------------
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+heatmat <- mat[c(prot_diff_up, prot_diff_down), ]
+dim(heatmat) # 252 1683
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+# mat_scale_fillna <- apply(mat_scale, 1, function(x){
+#   x[is.na(x)] <- min(x, na.rm = T)
+#   return(x)
+# }) %>% t %>% as.data.frame()
+
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+# pheatmap::pheatmap(
+#   mat_scale_fillna[, c(f_index, c_index, nc_index, n_index)],
+#   color = my_colors,
+#   legend_breaks = seq(-3,4,2),
+#   breaks = my_breaks,
+#   fontsize_col = 8,
+#   border_color = F,
+#   # annotation_col = ann_col, annotation_row = ann_row,
+#   # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+#   # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+#   fontsize_row=3,
+#   # annotation_colors = ann_colors,
+#   na_col = "grey60",#scale = "row",
+#   cluster_rows = T, cluster_cols = F,
+#   show_rownames = T, show_colnames = F
+# )
+
+# arrange
+file_info <- data.frame(FileName = colnames(mat_scale)) %>%
+  left_join(df_compare_mean %>% select(FileName, Group)) %>%
+  left_join(all1 %>% select(FileName, anatomical_classification)) %>% 
+  rename(sample_type = Group, organ = anatomical_classification)
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+
+pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_heatmap.pdf',
+  width = 15, height = 17
+)
+
+list(matrix = heat, label = file_info) %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_heatmap.xlsx')
+
+
+
+# 1.3.2.3 heatmap with brain except glio ----------------------------------
+heatmat <- cbind(mat[c(prot_diff_up, prot_diff_down), ], mat_brain[c(prot_diff_up, prot_diff_down), ])
+dim(heatmat) # 252 1757
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+# mat_scale_fillna <- apply(mat_scale, 1, function(x){
+#   x[is.na(x)] <- min(x, na.rm = T)
+#   return(x)
+# }) %>% t %>% as.data.frame()
+
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+# pheatmap::pheatmap(
+#   mat_scale_fillna[, c(f_index, c_index, nc_index, n_index)],
+#   color = my_colors,
+#   legend_breaks = seq(-3,4,2),
+#   breaks = my_breaks,
+#   fontsize_col = 8,
+#   border_color = F,
+#   # annotation_col = ann_col, annotation_row = ann_row,
+#   # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+#   # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+#   fontsize_row=3,
+#   # annotation_colors = ann_colors,
+#   na_col = "grey60",#scale = "row",
+#   cluster_rows = T, cluster_cols = F,
+#   show_rownames = T, show_colnames = F
+# )
+
+# arrange
+file_info <- data.frame(FileName = colnames(mat_scale)) %>%
+  # left_join(df_compare_mean %>% select(FileName, Group)) %>%
+  left_join(all1 %>% select(FileName, sample_type, anatomical_classification)) %>% 
+  rename(organ = anatomical_classification) %>% 
+  mutate(sample_type = sapply(sample_type, function(x) {switch(x, adjacent = 'Noncancerous', carcinoma = 'Cancerous', x)}))
+
+# file_info %>% filter(organ == 'brain') %>% pull(sample_type)
+file_info[which(file_info$organ == 'brain'), 'sample_type'] <- 'Brain'
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal', 'Brain'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+
+pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_heatmap.pdf',
+  width = 15, height = 17
+)
+
+list(matrix = heat, label = file_info) %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_heatmap.xlsx')
+
+
+
+# 1.3.2.3.x heatmap with brain adding glio ----------------------------------
+file_info <- all1 %>% select(FileName, sample_type, anatomical_classification) %>% 
+  rename(organ = anatomical_classification) %>% 
+  mutate(sample_type = sapply(sample_type, function(x) {switch(x, adjacent = 'Noncancerous', carcinoma = 'Cancerous', x)}))
+
+# file_info[which(file_info$organ == 'brain'), 'sample_type'] <- 'Brain'
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+
+file_info1 <- file_info %>% slice(-which(organ == 'brain'))
+file_info2 <- file_info %>% slice(which(organ == 'brain'))
+file_info <- rbind(file_info1, file_info2)
+
+heatmat <- cbind(
+  mat[c(prot_diff_up, prot_diff_down), ],
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Cancerous'))], # brain_C
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Noncancerous'))], # brain_NC
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Normal'))] # brain_N
+)
+dim(heatmat) # 252 1781
+
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+
+
+
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+
+pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_heatmap.pdf',
+  width = 15, height = 17
+)
+
+list(matrix = heat, label = file_info) %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_heatmap.xlsx')
+
+
+
+
+
+
+
+
+
+
+
+############### t-SNE only brain -------------
+# 
+# ge.plot.tsne_v2<-function(tsne,type,title="",label=NULL,col, set){
+#   col2<-col
+#   cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+#   cl2 <- cl[match(type,row.names(cl)),1]
+#   set2<-set
+#   st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+#   st2<-st[match(type,row.names(cl)),1]
+#   # df10 <- data
+#   # df10[is.na(df10)] <- 0 #
+#   # df10 <- t(apply(df10, 1, scale))  #
+#   # colnames(df10) <- type
+#   tsne<-tsne
+#   # tsne <- Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+#   pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+#   if(is.null(label)){
+#     par(mai=c(0.4,0.5,0.2,2.4))
+#     plot(tsne,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+#     legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+#            x.intersp=0.5,bty='n')
+#   }else{
+#     plot(tsne,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+#     text(tsne,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+#     legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+#   }
+#   dev.off()
+#   
+#   
+#   # return(tsne$Y)
+# }
+# 
+# all1$anatomical_classification[is.na(all1$anatomical_classification)]<-"Unknown"
+# type=all1$anatomical_classification
+# col=rep("#D3D3D3", times=length(unique(type)))
+# col[grep("brain",unique(type))]<-"#E41A1C"
+# col
+# set<-c(rep(0,length(unique(type))))
+# t<-"F:/1_project/PUH/figure/source/20230306_PUH_tsne_1731samples_CE"
+# ge.plot.tsne_v2(tsne,type,title = t,col = col,set = set)
+
+```
+
+
+# 1. Data reading
+## 1.1 For t-SNE
+```{r}
+all<-readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20220701TPHP_1783file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
+head(colnames(all),n=25)
+# info<-read_xlsx("//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+info<-readxl::read_xlsx("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+table(all$cancer_type)
+# adjacent carcinoma    Normal 
+# 543       540       641 
+
+ge.plot.tsne<-function(data,type,title="",label=NULL,seed=2023){
+  col2<-rep(brewer.pal(9,"Set1")[1:9],3)[1:4]
+  cl <- data.frame(col2,row.names =unique(type),stringsAsFactors = F)
+  cl2 <- cl[match(type,row.names(cl)),1]
+  set2<-c(rep(0,times=4))
+  st <- data.frame(set2,row.names =unique(type),stringsAsFactors = F)
+  st2<-st[match(type,row.names(cl)),1]
+  df10 <- data
+  df10[is.na(df10)] <- 0 #
+  df10 <- t(apply(df10, 1, scale))  #
+  colnames(df10) <- type
+  set.seed(seed)
+  tsne <- Rtsne::Rtsne(t(df10), dims = 2, perplexity = (ncol(data)-1)/3-1, verbose = T , check_duplicates = FALSE)
+  pdf(paste0(title,"_TSNE.pdf"),height = 7,width = 10)
+  if(is.null(label)){
+    par(mai=c(0.4,0.5,0.2,2.4))
+    plot(tsne$Y,col=cl2, main = "tsne", pch =st2,cex=0.6,cex.axis=2,cex.lab=2)
+    legend(x=5.1,y=5,legend=row.names(cl),pch=set2, cex=0.8,pt.cex=1,col=cl$col2,ncol=1,xpd=T,
+           x.intersp=0.5,bty='n')
+  }else{
+    plot(tsne$Y,col=cl2, main = "tsne", pch = 20,cex=2,cex.axis=2,cex.lab=2,xlab='t-SNE 1',ylab='t-SNE 2')
+    text(tsne$Y,pos = 1, labels = label, col= "DimGrey",cex = 0.8)
+    legend("topright",legend=row.names(cl), fill=cl$col2, lty=1,lwd=1)
+  }
+  dev.off()
+  
+  
+  return(tsne$Y)
+}
+
+all1<-merge(info,all[,c(1,18:ncol(all))],by="FileName",all.X=T)
+head(colnames(all1),n=25)
+type<-all1$sample_type
+df<-apply(t(all1[,-c(1:21)]),c(1,2),as.numeric)
+class(df)
+colnames(df)<-all1$FileName
+# has been performed
+# df[1,2]
+# t="20230710_PUH_tsne_1731samples_cancer_type_v2"
+# # dim(df)#11694 probes
+# tsne<-ge.plot.tsne(df,type=type,title=t)
+# tsne_df<-as.data.frame(cbind(all1[,1:17],tsne))
+
+tsne_df[tsne_df$sample_type == 'carcinoma', 'sample_type'] <- 'Cancerous'
+tsne_df[tsne_df$sample_type == 'adjacent', 'sample_type'] <- 'Noncancerous'
+tsne_df$sample_type %<>% factor(levels = c('Cancerous', 'Noncancerous', 'Normal', 'Fetal'))
+tsne_df %<>% rename(X = `1`, Y = `2`)
+
+# rio::export(tsne_df, '20230710_PUH_tsne_1731samples_cancer_type_v2.xlsx')
+
+```
+
+### 1.1.1 t-SNE display
+```{r}
+p <- ggplot(tsne_df) +
+  aes(x = X, y = Y, color = sample_type) +
+  geom_point(shape = "circle", size = 1.5) +
+  labs(x = "t-SNE 1", y = "t-SNE 2") +
+  guides(color = guide_legend(title = "Sample type")) +
+  scale_color_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3')) +
+  theme_minimal() +
+  theme(legend.position = 'right',
+        legend.text = element_text(size = 20, color = "black"),
+        legend.title = element_text(size=20,color="black"),
+        panel.grid = element_blank(),
+        panel.grid.major =element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(size = 20,color = "black"),
+        axis.text.x = element_text(size = 20,color = "black", angle = 0),
+        axis.title.x=element_text(size = 22, hjust = 0.5, color = "black"),
+        axis.title.y=element_text(size = 22, hjust = 0.5, color = "black"),
+        plot.subtitle=element_text(size = 25, hjust = 0, color = "black")
+  )
+
+p <- p +
+  stat_ellipse(aes(fill = sample_type), level = 0.8, geom = 'polygon', size = 0.5, alpha = 0.2) +
+  scale_fill_manual(values = c(Cancerous = '#E41A1C', Noncancerous = '#377EB8', Normal =  '#4DAF4A', Fetal = '#984EA3'))
+
+
+# canvas
+canvasXpress::canvasXpress(
+  data=list(y=tsne_df[, c('X', 'Y')]),
+  varAnnot=tsne_df %>%
+    select(DIA_ID, sample_type, anatomical_classification) %>%
+    add_column(Label = str_c(.$sample_type, .$anatomical_classification, sep = '-'), .before = 1),
+  scatterPlotMatrix=F,title='t-SNE',colorBy ='anatomical_classification', legendColumns=1,width = 1200,height=600
+)
+
+
+tsne_df1 <- tsne_df %>% filter(anatomical_classification %in% unique(tsne_df$anatomical_classification[tsne_df$sample_type == 'Cancerous']))
+
+canvasXpress::canvasXpress(
+  data=list(y=tsne_df1[, c('X', 'Y')]),
+  varAnnot=tsne_df1 %>% select(sample_type, anatomical_classification),
+  scatterPlotMatrix=F,title='t-SNE',colorBy ='anatomical_classification', legendColumns=1,width = 1200,height=600
+)
+canvasXpress::canvasXpress(
+  data=list(y=tsne_df1[, c('X', 'Y')]),
+  varAnnot=tsne_df1 %>% select(sample_type, anatomical_classification) %>%
+    add_column(Label = str_c(.$sample_type, .$anatomical_classification, sep = '-'), .before = 1),
+  scatterPlotMatrix=F,title='t-SNE',colorBy ='Label', legendColumns=1,width = 1200,height=600
+)
+
+tsne_df2 <- tsne_df1 %>% filter(anatomical_classification %in% c('brain', 'liver', 'lymph node', 'small intestine', 'testis'))
+canvasXpress::canvasXpress(
+  data=list(y=tsne_df2[, c('X', 'Y')]),
+  varAnnot=tsne_df2 %>% select(sample_type, anatomical_classification) %>%
+    add_column(Label = str_c(.$anatomical_classification, .$sample_type, sep = '-'), .before = 1),
+  scatterPlotMatrix=F,title='t-SNE',colorBy ='Label', legendColumns=1,width = 1200,height=600
+)
+
+
+
+
+tsne_df %>%
+  filter(X < -4, Y < -2) %>%
+  select(X, Y, sample_type, anatomical_classification, tissue_name)
+
+
+tsne_df %>%
+  filter(X < -4, Y < -2) %>%
+  select(X, Y, sample_type, anatomical_classification) %>%
+  count(sample_type, anatomical_classification) %>%
+  arrange(anatomical_classification, sample_type)
+
+tsne_df %>%
+  filter(X < -4, Y < -2) %>%
+  select(X, Y, sample_type, anatomical_classification, tissue_name) %>%
+  count(sample_type, anatomical_classification, tissue_name) %>%
+  arrange(anatomical_classification, tissue_name, sample_type)
+
+tsne_df %>%
+  select(X, Y, sample_type, anatomical_classification, tissue_name) %>%
+  count(sample_type, anatomical_classification, tissue_name) %>%
+  arrange(anatomical_classification, tissue_name, sample_type)
+
+canvasXpress::canvasXpress(data=list(y=tsne_df %>% filter(anatomical_classification %in% c('muscle', 'tongue', 'throat', 'heart')) %>% select(X, Y)),varAnnot=tsne_df %>% filter(anatomical_classification %in% c('muscle', 'tongue', 'throat', 'heart')) %>% select(sample_type, anatomical_classification),scatterPlotMatrix=F,title='t-SNE',colorBy ='sample_type', legendColumns=1,width = 1200,height=600)
+
+
+
+### check testis-vagina--------
+canvasXpress::canvasXpress(
+  data=list(y = tsne_df %>%
+              filter(anatomical_classification %in% c('testis', 'vagina')) %>% 
+              select(X, Y)),
+  varAnnot=tsne_df %>%
+    filter(anatomical_classification %in% c('testis', 'vagina')) %>% 
+    select(DIA_ID, sample_type, anatomical_classification) %>%
+    add_column(Label = str_c(.$sample_type, .$anatomical_classification, sep = '-'), .before = 1),
+  scatterPlotMatrix=F,title='t-SNE',colorBy ='anatomical_classification', legendColumns=1,width = 1200,height=600
+)
+
+#vagina
+X <- df[, tsne_df %>% filter(DIA_ID %in% c('DIA_61', 'DIA_554', 'DIA_555')) %>% pull(FileName)]
+X %<>% log2()
+cor(X, use = "pairwise.complete.obs", method = "pearson")
+
+X[is.na(X)] <- min(X, na.rm = T) + log2(0.8)
+cor(X, use = "pairwise.complete.obs", method = "pearson")
+cor(X, use = "pairwise.complete.obs", method = "spearman")
+
+#testis
+Y <- df[, tsne_df %>% filter(anatomical_classification == 'testis', sample_type == 'Normal') %>% pull(FileName) %>% c('N20210424yuel_TPHP_554_Slot1-14_1_5109.d')]
+Y %<>% log2()
+tmp <- cor(Y, use = "pairwise.complete.obs", method = "pearson")
+
+Y[is.na(Y)] <- min(Y, na.rm = T) + log2(0.8)
+cor(Y, use = "pairwise.complete.obs", method = "pearson")
+cor(Y, use = "pairwise.complete.obs", method = "spearman")
+
+list(WithNA = tmp %>% as.data.frame() %>% rownames_to_column(),
+     WithoutNA = cor(Y, use = "pairwise.complete.obs", method = "pearson") %>% as.data.frame() %>% rownames_to_column()) %>% rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/quantitative_database/testis_normal.xlsx')
+
+```
+
+
+
+
+## 1.2 For DEA
+```{r}
+df_wilcox_test <- rio::import('PUH_allSample_differentiation_v2_20230711.xlsx')
+
+tsne_df <- rio::import('20230710_PUH_tsne_1731samples_cancer_type_v2.xlsx')
+tsne_df[tsne_df$sample_type == 'carcinoma', 'sample_type'] <- 'Cancerous'
+tsne_df[tsne_df$sample_type == 'adjacent', 'sample_type'] <- 'Noncancerous'
+tsne_df$sample_type %<>% factor(levels = c('Cancerous', 'Noncancerous', 'Normal', 'Fetal'))
+tsne_df %<>% rename(X = `1`, Y = `2`)
+
+df_tsne_brain <- tsne_df %>% filter(anatomical_classification == 'brain') # only brain
+df_tsne_brain %<>% filter(tissue_name != 'glioblastoma') # brain remove glioblastoma
+files_brain <- df_tsne_brain$FileName
+
+df_compare_mean <- as.data.frame(t(mat)) %>% rownames_to_column('FileName')
+df_compare_mean %<>% add_column(Group = NA, .before = 2)
+df_compare_mean[f_index, 'Group'] <- 'Fetal'
+df_compare_mean[c_index, 'Group'] <- 'Cancerous'
+df_compare_mean[nc_index, 'Group'] <- 'Noncancerous'
+df_compare_mean[n_index, 'Group'] <- 'Normal'
+
+# # focus on brain
+# glio_index <- which(colnames(df) %in% (tsne_df %>% filter(tissue_name == 'glioblastoma') %>% pull(FileName)))
+# mat <- df[, -glio_index]
+# files_brain_index <- which(colnames(mat) %in% files_brain)
+# condition1 <- apply(mat[, files_brain_index], 1, function(x) any(!is.na(x))) # any brain not NA
+# condition2 <- apply(mat[, -files_brain_index], 1, function(x) any(!is.na(x))) # any others not NA
+# mat <- mat[condition1 & condition2, ]
+# dim(mat) # 10252 1757
+
+
+# focus on differential
+brain_index <- which(colnames(df) %in% (tsne_df %>% filter(anatomical_classification == 'brain') %>% pull(FileName)))
+mat <- df[, -brain_index]
+dim(mat) # 13479  1683
+mat_brain <- df[, files_brain]
+
+f_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Fetal') %>% pull(FileName)))
+c_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Cancerous') %>% pull(FileName)))
+nc_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Noncancerous') %>% pull(FileName)))
+n_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Normal') %>% pull(FileName)))
+
+condition1 <- apply(mat[, f_index], 1, function(x) any(!is.na(x))) # any fetal not NA
+condition2 <- apply(mat[, c_index], 1, function(x) any(!is.na(x))) # any cancerous not NA
+condition3 <- apply(mat[, nc_index], 1, function(x) any(!is.na(x))) # any noncancerous not NA
+condition4 <- apply(mat[, n_index], 1, function(x) any(!is.na(x))) # any normal not NA
+mat <- mat[condition1 & condition2 & condition3 & condition4, ]
+dim(mat) # 12123  1683
+
+```
+
+
+# 2. DEA: F -> C -> NC -> N, without plasma and brain
+## 2.1 Wilcox test and mean fold-change
+na omit, not remove; 
+```{r}
+# remove brain and 13 plasma samples
+rm_index <- which(colnames(df) %in% (tsne_df %>% filter(anatomical_classification %in% c('brain', 'plasma') | tissue_name %in% c('fetal telencephalon', 'fetal mesencephalon', 'fetal myelencephalon', 'fetal metencephalon')) %>% pull(FileName)))
+mat <- df[, -rm_index]
+dim(mat) # 13479  1656
+
+#  F/C/NC/N  NA ratio
+f_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Fetal') %>% pull(FileName)))
+c_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Cancerous') %>% pull(FileName)))
+nc_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Noncancerous') %>% pull(FileName)))
+n_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Normal') %>% pull(FileName)))
+
+condition1 <- apply(mat[, f_index], 1, function(x) any(!is.na(x))) # any fetal not NA
+condition2 <- apply(mat[, c_index], 1, function(x) any(!is.na(x))) # any cancerous not NA
+condition3 <- apply(mat[, nc_index], 1, function(x) any(!is.na(x))) # any noncancerous not NA
+condition4 <- apply(mat[, n_index], 1, function(x) any(!is.na(x))) # any normal not NA
+mat <- mat[condition1 & condition2 & condition3 & condition4, ]
+dim(mat) # 12070  1656
+
+# Wilcox test
+df_compare_mean <- as.data.frame(t(mat)) %>% rownames_to_column('FileName')
+df_compare_mean %<>% add_column(Group = NA, .before = 2)
+df_compare_mean[f_index, 'Group'] <- 'Fetal'
+df_compare_mean[c_index, 'Group'] <- 'Cancerous'
+df_compare_mean[nc_index, 'Group'] <- 'Noncancerous'
+df_compare_mean[n_index, 'Group'] <- 'Normal'
+
+df_p_ls <- list()
+for(j in 3:ncol(df_compare_mean)){
+  cat(j, '...\r')
+  dfsub <- df_compare_mean %>% select(2, all_of(j))
+  prot_name <- colnames(dfsub)[2]
+  colnames(dfsub)[2] <- 'Protein'
+  my_comparisons <- list(c('Fetal', 'Cancerous'), c('Cancerous', 'Noncancerous'), c('Noncancerous', 'Normal'))
+  df_p <- plyr::ldply(my_comparisons, function(comp){
+    x1 <- na.omit(dfsub %>% filter(Group == comp[1]) %>% pull(Protein))
+    x2 <- na.omit(dfsub %>% filter(Group == comp[2]) %>% pull(Protein))
+    p <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+    data.frame(Protein = prot_name, Group1 = comp[1], Group2 = comp[2], p = p) %>% return()
+  })
+  df_p$p.adj <- p.adjust(df_p$p, method = 'BH')
+  df_p_ls[[j-2]] <- df_p
+  # ggpubr::compare_means(formula = Protein ~ Group, data = dfsub, method = 'wilcox.test', p.adjust.method = 'BH', comparisons = my_comparisons)
+}
+names(df_p_ls) <- colnames(df_compare_mean)[-(1:2)]
+df_test <- plyr::ldply(df_p_ls)
+df_test %<>% mutate(Protein = .id, .id = NULL)
+
+df_test$Group1 <- sapply(df_test$Group1, function(x) switch(x, Fetal = 'f.', Cancerous = 'c.', Noncancerous = 'nc.'))
+df_test$Group2 <- sapply(df_test$Group2, function(x) switch(x, Cancerous = 'c', Noncancerous = 'nc', Normal = 'n'))
+df_test$Pair_P <- str_c('P_', df_test$Group1, df_test$Group2)
+df_test$Pair_adjP <- str_c('adjP_', df_test$Group1, df_test$Group2)
+df_test %<>% select(-Group1, -Group2)
+df_test1 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_P', values_from = 'p')
+df_test2 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_adjP', values_from = 'p.adj')
+df_wilcox_test <- df_test1 %>% left_join(df_test2, by = 'Protein')
+
+log2fc_f.c <- log2fc_c.nc <- log2fc_nc.n <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- na.omit(mat[i, f_index])
+  x2 <- na.omit(mat[i, c_index])
+  x3 <- na.omit(mat[i, nc_index])
+  x4 <- na.omit(mat[i, n_index])
+  
+  log2fc_f.c[i] <- log2(mean(x1) / mean(x2))
+  log2fc_c.nc[i] <- log2(mean(x2) / mean(x3))
+  log2fc_nc.n[i] <- log2(mean(x3) / mean(x4))
+}
+df_wilcox_test$log2FC_f.c <- log2fc_f.c
+df_wilcox_test$log2FC_c.nc <- log2fc_c.nc
+df_wilcox_test$log2FC_nc.n <- log2fc_nc.n
+
+p_significant <- df_wilcox_test %>% select(contains('adjP')) %>% apply(1, function(x) all(x < 0.05)) # wheather adjp < 0.05
+fc_significant <- df_wilcox_test %>% select(contains('log2FC')) %>% apply(1, function(x) {(all(abs(x) >= log2(1.2))) & (length(unique(sign(x))) == 1)}) # wheather |FC| >= 1.5 and with the same signature
+df_wilcox_test$isSignificant <- ifelse(p_significant & fc_significant, T, F)
+df_wilcox_test$Regulation <- ifelse(df_wilcox_test$log2FC_f.c > 0, 'Up', 'Down')
+df_wilcox_test[!df_wilcox_test$isSignificant, 'Regulation'] <- NA # cannot describe insignificance
+table(df_wilcox_test$isSignificant)
+# FALSE  TRUE 
+# 11862   208 
+
+rio::export(df_wilcox_test, 'PUH_allSample_differentiation_rmBrainPlasma_20230722.xlsx')
+
+```
+
+## 2.2 ===GO enrichment===
+```{r}
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 35
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 187
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+#BP
+goall_PBPM_BP_up <- enrichGO(prot_diff_up, OrgDb = org.Hs.eg.db,
+                             ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOBP_up <- goall_PBPM_BP_up[]
+goall_PBPM_BP_down <- enrichGO(prot_diff_down, OrgDb = org.Hs.eg.db,
+                               ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05)
+df_GOBP_down <- goall_PBPM_BP_down[]
+df_GOBP <- plyr::ldply(list(Up = df_GOBP_up, Down = df_GOBP_down), .id = 'Regulation')
+df_GOBP$pvalue <- -log10(df_GOBP$pvalue)
+df_GOBP$pvalue <- ifelse(df_GOBP$Regulation == 'Up', df_GOBP$pvalue, -df_GOBP$pvalue)
+df_GOBP %<>% arrange(desc(pvalue))
+# df_GOBP$Count <- as.factor(df_GOBP$Count)
+# df_GOBP$Description %<>% str_to_sentence()
+
+# library(ggcharts)
+quantile(df_GOBP$pvalue)
+GO_BP <- ggplot(df_GOBP,aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP$Description))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_GOBP_20230712.pdf', GO_BP, width = 20, height = 30)
+rio::export(df_GOBP, 'PUH_allSample_differentiation_rmBrainPlasma_GOBP_20230712.xlsx')
+
+GO_BP <- ggplot((df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP))),aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP)) %>% pull(Description)))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_GOBP_top20UpDown_20230712.pdf', GO_BP, width = 12, height = 10)
+
+
+GO_BP <- ggplot((df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP))),aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP %>% dplyr::slice(1:20, (nrow(df_GOBP)-19):nrow(df_GOBP)) %>% pull(Description)))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black",angle=45,hjust=1),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold")) +
+  coord_flip()
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_GOBP_top20UpDown_flip_20230712.pdf', GO_BP, width = 20, height = 10)
+
+
+```
+
+
+## 2.3 ===heatmap===
+```{r}
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+
+file_info <- all1 %>%
+  filter(anatomical_classification != 'plasma') %>% 
+  select(FileName, tissue_name, sample_type, anatomical_classification) %>% 
+  rename(organ = anatomical_classification) %>% 
+  mutate(sample_type = sapply(sample_type, function(x) {switch(x, adjacent = 'Noncancerous', carcinoma = 'Cancerous', x)}))
+file_info[file_info$tissue_name %in% c('fetal telencephalon', 'fetal mesencephalon', 'fetal myelencephalon', 'fetal metencephalon'), 'organ'] <- 'brain' # set fetal brain to organ brain
+
+# file_info[which(file_info$organ == 'brain'), 'sample_type'] <- 'Brain'
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+
+file_info1 <- file_info %>% slice(-which(organ == 'brain'))
+file_info2 <- file_info %>% slice(which(organ == 'brain'))
+file_info <- rbind(file_info1, file_info2)
+
+heatmat <- cbind(
+  mat[c(prot_diff_up, prot_diff_down), ],
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Fetal'))], # brain_F
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Cancerous'))], # brain_C
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Noncancerous'))], # brain_NC
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Normal'))] # brain_N
+)
+dim(heatmat) # 208 1768
+
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+
+
+
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+
+pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_heatmap_20230722.pdf',
+  width = 15, height = 17
+)
+
+list(matrix = heat, label = file_info) %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_heatmap_20230722.xlsx')
+
+
+
+```
+
+
+## 2.4 GSVA
+### 2.4.1 GSVA
+```{r}
+# BiocManager::install('GSVA')
+# BiocManager::install('GSEABase')
+# remotes::install_github("HenrikBengtsson/future.apply@develop")
+
+
+# BiocManager::install("GSVA")
+# install.packages(c("matrixStats","irlba","rsvd"))
+library(GSVA)
+library(GSEABase)
+# source("F:/1_project/SJOVA/code/src/1_2_read_matrix_label_withoutADT.R")
+
+
+
+# transform prot x file matrix to prot x sampleType matrix
+df_lbl <- file_info %>% rownames_to_column('FileName')
+df_lbl[df_lbl$organ != 'brain', 'organ'] <- 'notBrain'
+names(df_lbl$sample_type) <- NULL
+
+filename_split <- plyr::dlply(df_lbl, c('sample_type', 'organ'), function(dfsub){
+  dfsub$FileName
+})
+
+mat_median <- sapply(filename_split, function(files){
+  rowMedians(heatmat4[, files], na.rm = T)
+})
+rownames(mat_median) <- rownames(heatmat4)
+mat_median <- mat_median[, c('Fetal.notBrain', 'Cancerous.notBrain', 'Noncancerous.notBrain', 'Normal.notBrain', 'Fetal.brain', 'Cancerous.brain', 'Noncancerous.brain', 'Normal.brain')] # arrange
+mat_median[is.na(mat_median)] <- min(mat_median, na.rm = T) + log2(0.8)
+
+# uniprotid to symbol
+writeClipboard(rownames(mat_median))
+df_query <- rio::import('idmapping_2023_07_22.xlsx')
+symbol_vec <- c()
+for(i in 1:nrow(mat_median)){
+  symbol_vec[i] <- my_uniprot2symbol(rownames(mat_median)[i])
+}
+symbol_vec[72] <- 'IGK' # P0DOX7; no resource
+symbol_vec[73] <- 'IGL1' # P0DOX8; no resource
+for(i in 74:nrow(mat_median)){
+  symbol_vec[i] <- my_uniprot2symbol(rownames(mat_median)[i])
+}
+df_query_map <- data.frame(From = rownames(mat_median), symbol = symbol_vec) %>% full_join(df_query)
+
+#  ID mapping 
+df_query_map %>% filter(symbol != To)
+# [1] From   symbol To    
+# <0 > (0-row.names)
+
+#  UniprotID  symbol
+df_query_map %>% count(From) %>% count(n)
+#   n  nn
+# 1 1 123
+setdiff(rownames(mat_median), df_query_map$From)
+# character(0)
+
+rownames(mat_median) <- symbol_vec
+
+
+
+##### GSEA  http://www.gsea-msigdb.org/gsea/msigdb/index.jsp
+#  human http://www.gsea-msigdb.org/gsea/msigdb/human/collections.jsp
+#  mouse http://www.gsea-msigdb.org/gsea/msigdb/mouse/collections.jsp
+# h1gmt <- getGmt("h.all.v7.4.symbols.gmt") # hallmark
+gogmt <- getGmt("c5.go.bp.v2023.1.Hs.symbols.gmt") # GO
+ssgsea <- gsva(
+  expr = mat_median,# a matrix of expression values where rows correspond to genes and columns correspond to samples.
+  gset.idx.list = gogmt,
+  method = 'ssgsea', kcdf = 'Gaussian', abs.ranking = T
+)
+
+# min-max normalization
+ssgsea.1 <- ssgsea
+for (i in colnames(ssgsea)) {
+  #i <- colnames(ssgsea)[1]
+  ssgsea.1[,i] <- (ssgsea[,i] -min(ssgsea[,i]))/(max(ssgsea[,i] )-min(ssgsea[,i] ))
+  
+}
+
+
+pheatmap::pheatmap(
+  ssgsea.1,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  color =colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10
+)
+
+
+
+
+# Min-Max[01]
+# 0-1
+ssgsea.1 <- ssgsea
+for (i in colnames(ssgsea)) {
+  #i <- colnames(ssgsea)[1]
+  ssgsea.1[,i] <- (ssgsea[,i] -min(ssgsea[,i]))/(max(ssgsea[,i] )-min(ssgsea[,i] ))
+  
+}
+
+
+
+
+
+
+
+
+
+
+########################################
+# #GSEA overview
+# library(clusterProfiler)
+# library(org.Hs.eg.db)
+# dat3<-reshape2::melt(sub_m,id.vars="Group.1")
+# colnames(dat3)<-c("Subtype","Uniprot","Exp")
+# dat3$log2exp<-log2(dat3$Exp)
+# dat4<-merge(map,dat3, by.x="UNIPROT",by.y="Uniprot")%>%na.omit()
+# dat4<-dat4[order(dat4$log2exp,decreasing = T),]
+# gsea<-compareCluster(ENTREZID|log2exp~Subtype, data = dat4,fun = "gseKEGG",organism="hsa")
+# gseaGO<-compareCluster(ENTREZID|log2exp~Subtype, data = dat4,fun = "gseGO",OrgDb='org.Hs.eg.db')
+# ##### too many proteins, hard to distinguish between subtypes
+
+```
+
+### 2.4.2 limma 
+```{r}
+library(limma)
+
+# set groups
+group <- factor(c('Fetal', 'C', 'NC', 'N', rep('Anyway', 4)))
+group <- factor(c('Fetal', 'C', 'NC', 'N', 'Fetal', rep('Brain', 3)))
+group <- factor(c('Fetal', 'C', 'NC', 'N', rep('Brain', 3)))
+# group <- factor(c('Fetal', 'C', 'NC', 'N'))
+
+design <- model.matrix(~0+group)
+colnames(design) <- levels(group)
+rownames(design) <- colnames(ssgsea.1)[1:4]
+
+compare <- makeContrasts(Fetal - C, C - NC, NC - N, levels = design)
+fit <- lmFit(ssgsea.1[, 1:4], design)
+fit2 <- contrasts.fit(fit, compare)
+fit3 <- eBayes(fit2)
+Diff <- topTable(fit3, coef=1, number=Inf) %>% dplyr::filter(P.Value < 0.05)
+
+Diff %>% rownames_to_column('Pathway') %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_20230722.xlsx')
+
+
+heat_ssgsea.1 <- ssgsea.1[rownames(Diff), ]
+heat_ssgsea.1 <- heat_ssgsea.1[apply(heat_ssgsea.1, 1, function(x) identical(sort(x[1:4]), x[1:4])|identical(sort(x[1:4], decreasing = T), x[1:4])), ]
+a <- pheatmap::pheatmap( # to perform a "hc" tree
+  heat_ssgsea.1[, 1:4],
+  scale = "none",
+  cluster_rows = T,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  color =colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_20230722.pdf',
+  width = 10, height = 15
+)
+
+heat_ssgsea.1 <- heat_ssgsea.1[a$tree_row$order, ]
+ann_col <- data.frame(
+  sample_type = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Cancerous', 'Noncancerous', 'Normal'),
+  row.names = colnames(heat_ssgsea.1)
+)
+b <- pheatmap::pheatmap(
+  heat_ssgsea.1,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v2_20230722.pdf',
+  width = 10, height = 15
+)
+
+heat_ssgsea.1 %>%
+  as.data.frame() %>%
+  rownames_to_column('Pathway') %>%
+  rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v2_20230722.xlsx')
+```
+
+
+### 2.4.3 GOBP terms simplify
+```{r}
+# BiocManager::install('RamiGO')
+library(rrvgo)
+# x <- rownames(Diff)[1] %>% str_replace('^GOBP_', '') %>% str_replace_all('_', ' ')
+
+Diff1 <- Diff[rownames(heat_ssgsea.1), ]
+
+msigdbC52GO <- function(x){
+  # QuickGO version 2022-03-14
+  x %<>% str_replace_all(' ', '%20')
+  my_html <- rvest::read_html(stringr::str_glue('https://www.ebi.ac.uk/QuickGO/services/internal/search/ontology?query={x}')) # get json
+  # for geneproduct:  https://www.ebi.ac.uk/QuickGO/services/geneproduct/search?query=
+  my_json <- my_html %>%
+    rvest::html_text() %>%
+    jsonlite::fromJSON()
+  
+  return(my_json$results[1, 1:2])
+}
+
+GO_query_rlt <- list()
+for(i in 1:nrow(Diff1)){
+  cat(i, '...\r')
+  x <- rownames(Diff1)[i] %>% str_replace('^GOBP_', '') %>% str_replace_all('_', ' ')
+  GO_query_rlt[[i]] <- msigdbC52GO(x)
+}
+names(GO_query_rlt) <- rownames(Diff1)
+df_GO <- plyr::ldply(GO_query_rlt, .id = 'msigdb_name')
+
+# go_analysis <- Diff1
+simMatrix <- calculateSimMatrix(df_GO$id,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+# scores <- setNames(-log10(Diff1$adj.P.Val), df_GO$id)
+scores <- setNames(-log10(Diff1$P.Value), df_GO$id)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+df_reduce <- reducedTerms %>%
+  left_join(df_GO, by = c(go = 'id')) %>%
+  dplyr::rename(score_parent = parent,
+                score_parentTerm = parentTerm)
+df_reduce <- plyr::ddply(df_reduce, 'cluster', function(dfsub){
+  dfsub %<>% arrange(desc(size))
+  dfsub$parent <- dfsub$go[1]
+  dfsub$parentTerm <- dfsub$term[1]
+  return(dfsub)
+})
+
+rio::export(df_reduce, 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230722.xlsx')
+
+pdf('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230722.pdf', width = 10, height = 10)
+# par(mfrow = c(2, 2))
+heatmapPlot(simMatrix,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix, reducedTerms)
+treemapPlot(reducedTerms)
+wordcloudPlot(reducedTerms, min.freq=1, colors="black")
+graphics.off()
+
+
+msigdb2go <- df_GO$id
+names(msigdb2go) <- df_GO$msigdb_name
+rownames(heat_ssgsea.1) <- msigdb2go[rownames(heat_ssgsea.1)]
+
+#
+pheatmap::pheatmap(
+  heat_ssgsea.1,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v3_20230722.pdf',
+  width = 10, height = 15
+)
+
+```
+
+#### 2.4.3.x GOBP terms simplify
+1. matrix
+2. up- / down- regulation
+##### 2.4.3.x.1 matrix
+```{r}
+# matrixpatternGO terms
+same_terms <- heat_ssgsea.1 %>%
+  as.data.frame %>% 
+  rownames_to_column('go') %>% 
+  mutate(go = str_replace(go, '^GO\\.', 'GO:')) %>% 
+  plyr::dlply(., colnames(ssgsea.1), function(dfsub){
+    dfsub$go
+  })
+length(same_terms) # 25
+same_terms1 <- same_terms[sapply(same_terms, length) > 1] # GO terms > 1
+names(same_terms1) <- seq_along(same_terms1)
+
+Diff2 <- Diff1 %>% # combine
+  rownames_to_column('msigdb_name') %>% 
+  left_join(df_GO)
+rownames(Diff2) <- Diff2$msigdb_name
+
+df_same_term <- plyr::ldply(same_terms1, function(term_vec){
+  Diff2 %>% filter(id %in% term_vec)
+}, .id = 'Group')
+df_same_term$Group %<>% as.character()
+
+term_relations <- as.list(GO.db::GOBPANCESTOR)[df_same_term$id]
+df_term_relations <- plyr::ldply(term_relations, function(x) {
+  data.frame(from = x)
+}, .id = 'to')
+df_term_relations$to %<>% as.character()
+df_term_relations %<>%
+  dplyr::select(from, to) %>% 
+  dplyr::filter(from %in% unlist(same_terms1), to %in% unlist(same_terms1))
+
+# add root
+df_term_relations <-
+  data.frame(from = 'all', to = unique(c(as.character(df_term_relations$to), df_term_relations$from))) %>%
+  rbind(df_term_relations)
+
+# add Group
+vertices <- data.frame(
+  name = df_same_term$id,
+  group = df_same_term$Group
+  # cluster = sample(letters[1:4], length(name), replace=T),
+  # value = 1
+) %>% dplyr::filter(name %in% unlist(df_term_relations))
+vertices %<>% rbind(data.frame(name = 'all', group = 0))
+
+v_colors <- RColorBrewer::brewer.pal(9, 'Set1') %>% setNames(c(1:8, 0))
+  # 1         2         3         4         5         6         7         8         0 
+"#E41A1C"; "#377EB8"; "#4DAF4A"; "#984EA3"; "#FF7F00"; "#FFFF33"; "#A65628"; "#F781BF"; "#999999" 
+        
+mygraph <- igraph::graph_from_data_frame(df_term_relations, vertices = vertices)
+pdf('identical_expression_GO_network_20230722.pdf', width = 10, height = 10)
+set.seed(2023)
+plot(mygraph, vertex.color = v_colors[vertices$group], # Node color
+     vertex.frame.color = "Forestgreen",            # Node border color
+     # vertex.shape=c("circle","square"),             # One of none, circle, square, csquare, rectangle crectangle, vrectangle, pie, raster, or sphere
+     vertex.size=15,                          # Size of the node (default is 15)
+     vertex.size2=NA,                               # The second size of the node (e.g. for a rectangle))
+     vertex.label.dist=0,                           # Distance between the label and the vertex
+     vertex.label.degree=0 ,                        # The position of the label in relation to the vertex (use pi)
+     edge.color='black',           # Edge color
+     edge.width=1,                        # Edge width, defaults to 1
+     edge.arrow.size=0.5,                           # Arrow size, defaults to 1
+     edge.arrow.width=0.5,                          # Arrow width, defaults to 1
+     edge.lty=c("solid")                           # Line type, could be 0 or blank, 1 or solid, 2 or dashed, 3 or dotted, 4 or dotdash, 5 or longdash, 6 or twodash
+     #edge.curved=c(rep(0,5), rep(1,5))            # Edge curvature, range 0-1 (FALSE sets it to 0, TRUE to 0.5)
+)
+graphics.off()
+
+list(
+  v = vertices %>% left_join(dplyr::select(df_same_term, -Group), by = c(name = 'id')),
+  g = df_term_relations
+) %>% rio::export('identical_expression_GO_network_20230722.xlsx')
+
+terms_rm <- vertices$name %>% setdiff(
+  c('GO:0000041', 'GO:1902904', 'GO:1902742', 'GO:0071478', 'GO:0043254', 'GO:0060267', 'GO:0003014', 'GO:0021761', 'GO:0051962', 'GO:0010720', 'GO:1904406', 'GO:0050779', 'GO:0010985', 'all')
+)
+
+df_same_term_filtered <- df_same_term %>%
+    dplyr::filter(!(id %in% terms_rm))
+
+
+
+
+
+# up- / down- regulation
+Diff_down <- Diff2 %>% filter(logFC > 0, id %in% df_same_term_filtered$id)
+Diff_up <- Diff2 %>% filter(logFC < 0, id %in% df_same_term_filtered$id)
+df_GO_down <- df_GO %>% filter(msigdb_name %in% rownames(Diff_down))
+df_GO_up <- df_GO %>% filter(msigdb_name %in% rownames(Diff_up))
+
+#down
+simMatrix_down <- calculateSimMatrix(df_GO_down$id,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+scores_down <- setNames(-log10(Diff_down$P.Value), df_GO_down$id)
+reducedTerms_down <- reduceSimMatrix(simMatrix_down,
+                                scores_down,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+#up
+simMatrix_up <- calculateSimMatrix(df_GO_up$id,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+scores_up <- setNames(-log10(Diff_up$P.Value), df_GO_up$id)
+reducedTerms_up <- reduceSimMatrix(simMatrix_up,
+                                scores_up,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+list(down = reducedTerms_down %>% arrange(cluster), up = reducedTerms_up %>% arrange(cluster)) %>%
+  rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_up-down_20230722.xlsx')
+
+
+pdf('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230722.pdf', width = 10, height = 10)
+# par(mfrow = c(2, 2))
+heatmapPlot(simMatrix_up,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix_up, reducedTerms_up)
+treemapPlot(reducedTerms_up)
+wordcloudPlot(reducedTerms_up, min.freq=1, colors="black")
+heatmapPlot(simMatrix_down,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix_down, reducedTerms_down)
+treemapPlot(reducedTerms_down)
+wordcloudPlot(reducedTerms_down, min.freq=1, colors="black")
+graphics.off()
+
+
+
+#
+heat_sorted <- heat_ssgsea.1[c(rownames(reducedTerms_up), rownames(reducedTerms_down)), ]
+go2lbl <- str_glue("{str_remove(df_GO$msigdb_name, '^GOBP_') %>% str_replace_all('_', ' ') %>% str_to_sentence()} ({df_GO$id})")
+names(go2lbl) <- df_GO$id
+rownames(heat_sorted) <- go2lbl[rownames(heat_sorted)]
+
+pheatmap::pheatmap(
+  heat_sorted[c(2, 9, 7, 1, 3, 8, 11, 4:6, 10, 12, 14:16, 19:20, 13, 17:18), ],
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_20230722.pdf',
+  width = 8, height = 8
+)
+
+
+```
+
+##### 2.4.3.x.2 network
+```{r}
+go_terms <- c(rownames(reducedTerms_up), rownames(reducedTerms_down))
+go_term_pool <- sort(go_terms)
+# i <- 1 # counter
+while(T){ # GO tree growth
+  # cat(i, '...\r')
+  go_tree <- as.list(GO.db::GOBPANCESTOR[setdiff(go_term_pool, 'all')])
+  tmp_pool <- c(go_tree, names(go_tree)) %>% unlist() %>% unique() %>% sort()
+  if(length(go_term_pool) < length(tmp_pool)){
+    go_term_pool <- tmp_pool
+  } else{
+    break
+  }
+  # i <- i + 1
+}
+go_tree <- as.list(GO.db::GOBPANCESTOR[setdiff(go_term_pool, 'all')])
+edges <- plyr::ldply(go_tree, function(x) {
+  data.frame(from = x)
+}, .id = 'to')
+edges$to %<>% as.character()
+edges %<>% dplyr::select(from, to)
+
+# add root
+edges <-
+  data.frame(from = 'all', to = unique(c(as.character(edges$to), edges$from))) %>%
+  rbind(edges)
+edges %<>% distinct()
+edges$highlight <- ifelse(apply(edges, 1, function(x){ any(x %in% go_terms) }), 1, 0) %>% factor
+
+# add Group
+vs <- data.frame(
+  name = go_term_pool,
+  highlight = ifelse(go_term_pool %in% go_terms, 1, 0) %>% factor
+)
+
+v_colors <- c('#A62628', '#BBBBBB66') %>% setNames(c(1, 0))
+mygraph <- igraph::graph_from_data_frame(edges, vertices = vs)
+list(edges = edges, vertices = vs) %>% rio::export('GO_network_20terms_growthto_159v_1462e.xlsx')
+pdf('GO_network_20terms_growthto_159v_1462e.pdf', width = 30, height = 30)
+set.seed(2023)
+plot(mygraph, vertex.color = v_colors[as.character(vs$highlight)], # Node color
+     vertex.frame.color = "Forestgreen",            # Node border color
+     # vertex.shape=c("circle","square"),             # One of none, circle, square, csquare, rectangle crectangle, vrectangle, pie, raster, or sphere
+     vertex.size=5,                          # Size of the node (default is 15)
+     vertex.size2=NA,                               # The second size of the node (e.g. for a rectangle))
+     vertex.label.dist=0,                           # Distance between the label and the vertex
+     vertex.label.degree=0 ,                        # The position of the label in relation to the vertex (use pi)
+     edge.color=v_colors[as.character(edges$highlight)],           # Edge color
+     edge.width=1,                        # Edge width, defaults to 1
+     edge.arrow.size=0.5,                           # Arrow size, defaults to 1
+     edge.arrow.width=0.5,                          # Arrow width, defaults to 1
+     edge.lty=c("solid")                           # Line type, could be 0 or blank, 1 or solid, 2 or dashed, 3 or dotted, 4 or dotdash, 5 or longdash, 6 or twodash
+     #edge.curved=c(rep(0,5), rep(1,5))            # Edge curvature, range 0-1 (FALSE sets it to 0, TRUE to 0.5)
+)
+graphics.off()
+
+
+
+p <- ggraph::ggraph(mygraph, layout = 'dendrogram', circular = TRUE) + 
+  ggraph::geom_edge_diagonal(colour="grey") +
+  ggraph::scale_edge_colour_distiller(palette = "RdPu") +
+  ggraph::geom_node_text(aes(x = x*1.5, y=y*1.5, label=name, colour=highlight), size=2.7, alpha=1) +
+  ggraph::geom_node_point(aes(colour=highlight)) +
+  scale_colour_manual(values= c('0' = '#BBBBBB66', '1' = '#A62628')) +
+  scale_size_continuous( range = c(0.1,10) ) +
+  theme_void() +
+  theme(
+    legend.position="none",
+    plot.margin=unit(c(0,0,0,0),"cm"),
+  ) +
+  expand_limits(x = c(-1.3, 1.3), y = c(-1.3, 1.3))
+ggsave('GO_network_20terms_growthto_159v_1462e_dendro.pdf', p, width = 20, height = 20)
+
+
+# edges %>% group_by(to) %>% count() %>% arrange(n)
+
+
+
+```
+##### 2.4.3.x.3 heatmap update
+```{r}
+heat_sorted_final <- heat_sorted[c(7,2,4,9,1,3,5,11,6,8,10,12,14,15,16,19,20,13,17,18), ]
+
+pheatmap::pheatmap(
+  heat_sorted_final,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_20230715.pdf',
+  width = 8, height = 8
+)
+
+heat_sorted_final %>% as.data.frame() %>% rownames_to_column('GO') %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_20230715.xlsx')
+```
+
+
+### 2.4.4 containing proteins of some GOBP pathways
+```{r}
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+
+# GOBP_data <- org.Hs.eg.db::get_GO_data("org.Hs.eg.db", "BP", "SYMBOL")
+
+go2gene <- toTable(org.Hs.egGO2ALLEGS)
+df_gene <- go2gene %>% filter(Ontology == 'BP', go_id %in% go_terms)
+df_gene <- clusterProfiler::bitr(
+  rownames(mat_median), fromType = "SYMBOL", toType = "ENTREZID", org.Hs.eg.db
+) %>% inner_join(df_gene, by = c(ENTREZID = 'gene_id'))
+df_gene$go_id %<>% factor(levels = str_extract(rownames(heat_sorted_final), 'GO:\\d+'), ordered = T)
+df_gene %<>% arrange(go_id)
+rio::export(df_gene, 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_genelist_20230715.xlsx')
+
+df_query <- rio::import('idmapping_2023_07_12.xlsx')
+# uniprot2symbol <- df_query$To
+# names(uniprot2symbol) <- df_query$From
+
+
+heat_new <- heat[df_query$From, ]
+rownames(heat_new) <- df_query$To
+
+pheatmap::pheatmap(
+  heat_new[unique(df_gene$SYMBOL), ],
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = F, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  cellwidth = 0.1, cellheight = 8,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_heatmap_GSVAenrichedOnly.pdf'
+)
+
+```
+
+
+
+
+# GO simplify
+## demo
+```{r}
+BiocManager::install("rrvgo")
+library(rrvgo)
+
+go_analysis <- read.delim(system.file("extdata/example.txt", package="rrvgo"))
+simMatrix <- calculateSimMatrix(go_analysis$ID,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+scores <- setNames(-log10(go_analysis$qvalue), go_analysis$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+heatmapPlot(simMatrix,
+            reducedTerms,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=6)
+
+scatterPlot(simMatrix, reducedTerms)
+
+treemapPlot(reducedTerms)
+
+wordcloudPlot(reducedTerms, min.freq=1, colors="black")
+
+
+
+```
+
+## change code
+```{r}
+simMatrix <- calculateSimMatrix(go_analysis$ID,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+
+
+
+# calculateSimMatrix
+x=go_analysis$ID
+orgdb="org.Hs.eg.db"
+ont="BP"
+method="Rel"
+keytype = "ENTREZID"
+
+
+{
+    semdata = GOSemSim::godata(orgdb, ont = ont, keytype = keytype)
+    # ont <- match.arg(ont)
+    # method <- match.arg(method)
+    if (all(is(orgdb) != "OrgDb")) {
+        orgdb <- GOSemSim::load_OrgDb(orgdb)
+    }
+    x <- unique(x)
+    found <- x %in% names(semdata@IC)
+    hasAncestor <- !is.na(sapply(x, function(x) tryCatch(GOSemSim:::getAncestors(ont)[x], 
+        error = function(e) NA)))
+    if (all(!found)) {
+        warning("No terms were found in orgdb for ", ont, "\nCheck that the organism and ontology match the ones provided by orgdb")
+        return(NA)
+    }
+    else if (!all(found)) {
+        warning("Removed ", length(x) - sum(found), " terms that were not found in orgdb for ", 
+            ont)
+    }
+    x <- x[found & hasAncestor]
+    m <- matrix(GOSemSim::goSim(x, x, semData = semdata, measure = method), 
+        ncol = length(x), dimnames = list(x, x))
+    out <- apply(m, 2, function(x) all(is.na(x)))
+    m[!out, !out]
+}
+
+
+
+
+```
+
+
+# ========
+# 2023-07-25 analysis after t-SNE
+```{r}
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+
+
+# 1. DEA ------------------------------------------------------------------
+all<-readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20220701TPHP_1783file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
+head(colnames(all),n=25)
+# info<-read_xlsx("//172.16.13.136/share/members/yuel/2022/tables/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+info<-readxl::read_xlsx("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/QC/20230223_PUH_sample_information_1781files_info_edited_v6.xlsx")
+table(all$cancer_type)
+
+
+all1<-merge(info,all[,c(1,18:ncol(all))],by="FileName",all.X=T)
+head(colnames(all1),n=25)
+type<-all1$sample_type
+df<-apply(t(all1[,-c(1:21)]),c(1,2),as.numeric)
+class(df)
+colnames(df)<-all1$FileName
+
+
+# remove brain and 13 plasma samples
+tsne_df <- rio::import('20230710_PUH_tsne_1731samples_cancer_type_v2.xlsx')
+tsne_df[tsne_df$sample_type == 'carcinoma', 'sample_type'] <- 'Cancerous'
+tsne_df[tsne_df$sample_type == 'adjacent', 'sample_type'] <- 'Noncancerous'
+tsne_df$sample_type %<>% factor(levels = c('Cancerous', 'Noncancerous', 'Normal', 'Fetal'))
+tsne_df %<>% rename(X = `1`, Y = `2`)
+
+rm_index <- which(colnames(df) %in% (tsne_df %>% filter(anatomical_classification %in% c('brain', 'plasma')) %>% pull(FileName)))
+mat <- df[, -rm_index]
+dim(mat) # 13479  1670
+
+
+
+#  F/C/NC/N  NA ratio
+f_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Fetal') %>% pull(FileName)))
+c_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Cancerous') %>% pull(FileName)))
+nc_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Noncancerous') %>% pull(FileName)))
+n_index <- which(colnames(mat) %in% (tsne_df %>% filter(sample_type == 'Normal') %>% pull(FileName)))
+
+condition1 <- apply(mat[, f_index], 1, function(x) any(!is.na(x))) # any fetal not NA
+condition2 <- apply(mat[, c_index], 1, function(x) any(!is.na(x))) # any cancerous not NA
+condition3 <- apply(mat[, nc_index], 1, function(x) any(!is.na(x))) # any noncancerous not NA
+condition4 <- apply(mat[, n_index], 1, function(x) any(!is.na(x))) # any normal not NA
+mat <- mat[condition1 & condition2 & condition3 & condition4, ]
+dim(mat) # 12123  1670
+
+# Wilcox test
+df_compare_mean <- as.data.frame(t(mat)) %>% rownames_to_column('FileName')
+df_compare_mean %<>% add_column(Group = NA, .before = 2)
+df_compare_mean[f_index, 'Group'] <- 'Fetal'
+df_compare_mean[c_index, 'Group'] <- 'Cancerous'
+df_compare_mean[nc_index, 'Group'] <- 'Noncancerous'
+df_compare_mean[n_index, 'Group'] <- 'Normal'
+
+df_p_ls <- list()
+for(j in 3:ncol(df_compare_mean)){
+  cat(j, '...\r')
+  dfsub <- df_compare_mean %>% select(2, all_of(j))
+  prot_name <- colnames(dfsub)[2]
+  colnames(dfsub)[2] <- 'Protein'
+  my_comparisons <- list(c('Fetal', 'Cancerous'), c('Cancerous', 'Noncancerous'), c('Noncancerous', 'Normal'))
+  df_p <- plyr::ldply(my_comparisons, function(comp){
+    x1 <- na.omit(dfsub %>% filter(Group == comp[1]) %>% pull(Protein))
+    x2 <- na.omit(dfsub %>% filter(Group == comp[2]) %>% pull(Protein))
+    p <- wilcox.test(x1, x2, paired = F)$p.value
+    data.frame(Protein = prot_name, Group1 = comp[1], Group2 = comp[2], p = p) %>% return()
+  })
+  df_p$p.adj <- p.adjust(df_p$p, method = 'BH')
+  df_p_ls[[j-2]] <- df_p
+  # ggpubr::compare_means(formula = Protein ~ Group, data = dfsub, method = 'wilcox.test', p.adjust.method = 'BH', comparisons = my_comparisons)
+}
+names(df_p_ls) <- colnames(df_compare_mean)[-(1:2)]
+df_test <- plyr::ldply(df_p_ls)
+df_test %<>% mutate(Protein = .id, .id = NULL)
+
+df_test$Group1 <- sapply(df_test$Group1, function(x) switch(x, Fetal = 'f.', Cancerous = 'c.', Noncancerous = 'nc.'))
+df_test$Group2 <- sapply(df_test$Group2, function(x) switch(x, Cancerous = 'c', Noncancerous = 'nc', Normal = 'n'))
+df_test$Pair_P <- str_c('P_', df_test$Group1, df_test$Group2)
+df_test$Pair_adjP <- str_c('adjP_', df_test$Group1, df_test$Group2)
+df_test %<>% select(-Group1, -Group2)
+df_test1 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_P', values_from = 'p')
+df_test2 <- df_test %>% pivot_wider(id_cols = 'Protein', names_from = 'Pair_adjP', values_from = 'p.adj')
+df_wilcox_test <- df_test1 %>% left_join(df_test2, by = 'Protein')
+
+log2fc_f.c <- log2fc_c.nc <- log2fc_nc.n <- c()
+for(i in 1:nrow(mat)){
+  cat('Processing protein ', i, '...\r')
+  x1 <- na.omit(mat[i, f_index])
+  x2 <- na.omit(mat[i, c_index])
+  x3 <- na.omit(mat[i, nc_index])
+  x4 <- na.omit(mat[i, n_index])
+  
+  log2fc_f.c[i] <- log2(mean(x1) / mean(x2))
+  log2fc_c.nc[i] <- log2(mean(x2) / mean(x3))
+  log2fc_nc.n[i] <- log2(mean(x3) / mean(x4))
+}
+df_wilcox_test$log2FC_f.c <- log2fc_f.c
+df_wilcox_test$log2FC_c.nc <- log2fc_c.nc
+df_wilcox_test$log2FC_nc.n <- log2fc_nc.n
+
+p_significant <- df_wilcox_test %>% select(contains('adjP')) %>% apply(1, function(x) all(x < 0.05)) # wheather adjp < 0.05
+fc_significant <- df_wilcox_test %>% select(contains('log2FC')) %>% apply(1, function(x) {(all(abs(x) >= log2(1.2))) & (length(unique(sign(x))) == 1)}) # wheather |FC| >= 1.5 and with the same signature
+df_wilcox_test$isSignificant <- ifelse(p_significant & fc_significant, T, F)
+df_wilcox_test$Regulation <- ifelse(df_wilcox_test$log2FC_f.c > 0, 'Up', 'Down')
+df_wilcox_test[!df_wilcox_test$isSignificant, 'Regulation'] <- NA # cannot describe insignificance
+table(df_wilcox_test$isSignificant)
+# FALSE  TRUE 
+# 11901   222
+
+rio::export(df_wilcox_test, 'PUH_allSample_differentiation_rmBrainPlasma_20230725.xlsx')
+
+
+
+# volcano plot
+df_dea <- df_wilcox_test
+df_dea %<>% mutate(
+  isSignificant_f.c = abs(log2FC_f.c) >= log2(1.2) & adjP_f.c < 0.05,
+  isSignificant_c.nc = abs(log2FC_c.nc) >= log2(1.2) & adjP_c.nc < 0.05,
+  isSignificant_nc.n = abs(log2FC_nc.n) >= log2(1.2) & adjP_nc.n < 0.05
+)
+
+p1 <- ggplot() +
+  geom_point(data = df_dea %>% filter(!isSignificant_f.c), aes(x = log2FC_f.c, y = -log10(adjP_f.c), size = abs(log2FC_f.c)), color = 'gray', alpha = 0.5) +
+  geom_point(data = df_dea %>% filter(isSignificant_f.c & log2FC_f.c > 0), aes(x = log2FC_f.c, y = -log10(adjP_f.c), size = abs(log2FC_f.c)), color = '#BC3C29', alpha = 0.8) +
+  geom_point(data = df_dea %>% filter(isSignificant_f.c & log2FC_f.c < 0), aes(x = log2FC_f.c, y = -log10(adjP_f.c), size = abs(log2FC_f.c)), color = '#0072B5', alpha = 0.8) +
+  scale_size(name = '|log2 (Fold change)|', limits = c(0, 10), breaks = c(2, 4, 6), labels = c(2, 4, 6), range = c(2, 6)) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, lwd = 0.6, alpha = 0.8) +
+  geom_vline(xintercept = log2(1.2) * c(1, -1),lty = 4,lwd = 0.6, alpha = 0.8) +
+  theme_classic() +
+  theme(legend.position = 'right',
+        panel.border = element_rect(fill = NA, color = "black", size = 0.5, linetype = "solid"),
+        axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.45),
+  )+
+  labs(x = "log2 (Fold change)", y = "-log10 (Adj. P value)") +
+  guides(size = guide_legend(title = '|log2 (Fold change)|'),) +
+  annotate("text", x = -4, y = 20, label = str_c("Down-regulated:\nn = ", sum(df_dea$isSignificant_f.c & df_dea$log2FC_f.c < 0)), size = 5) +
+  annotate("text", x = 4, y = 20, label = str_c("Up-regulated:\nn = ", sum(df_dea$isSignificant_f.c & df_dea$log2FC_f.c > 0)), size = 5)
+
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_fetal-tumor_20230725.pdf', p1, width = 8, height = 7)
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_fetal-tumor_wolegend_20230725.pdf', p1+theme(legend.position = 'none'), width = 7, height = 7)
+
+
+
+p2 <- ggplot() +
+  geom_point(data = df_dea %>% filter(!isSignificant_c.nc), aes(x = log2FC_c.nc, y = -log10(adjP_c.nc), size = abs(log2FC_c.nc)), color = 'gray', alpha = 0.5) +
+  geom_point(data = df_dea %>% filter(isSignificant_c.nc & log2FC_c.nc > 0), aes(x = log2FC_c.nc, y = -log10(adjP_c.nc), size = abs(log2FC_c.nc)), color = '#BC3C29', alpha = 0.8) +
+  geom_point(data = df_dea %>% filter(isSignificant_c.nc & log2FC_c.nc < 0), aes(x = log2FC_c.nc, y = -log10(adjP_c.nc), size = abs(log2FC_c.nc)), color = '#0072B5', alpha = 0.8) +
+  scale_size(name = '|log2 (Fold change)|', limits = c(0, 10), breaks = c(2, 4, 6), labels = c(2, 4, 6), range = c(2, 6)) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, lwd = 0.6, alpha = 0.8) +
+  geom_vline(xintercept = log2(1.2) * c(1, -1),lty = 4,lwd = 0.6, alpha = 0.8) +
+  theme_classic() +
+  theme(legend.position = 'right',
+        panel.border = element_rect(fill = NA, color = "black", size = 0.5, linetype = "solid"),
+        axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.45),
+  )+
+  labs(x = "log2 (Fold change)", y = "-log10 (Adj. P value)") +
+  guides(size = guide_legend(title = '|log2 (Fold change)|'),) +
+  annotate("text", x = -4, y = 20, label = str_c("Down-regulated:\nn = ", sum(df_dea$isSignificant_c.nc & df_dea$log2FC_c.nc < 0)), size = 5) +
+  annotate("text", x = 4, y = 20, label = str_c("Up-regulated:\nn = ", sum(df_dea$isSignificant_c.nc & df_dea$log2FC_c.nc > 0)), size = 5)
+
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_tumor-nontumor_20230725.pdf', p2, width = 8, height = 7)
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_tumor-nontumor_wolegend_20230725.pdf', p2+theme(legend.position = 'none'), width = 7, height = 7)
+
+
+
+p3 <- ggplot() +
+  geom_point(data = df_dea %>% filter(!isSignificant_nc.n), aes(x = log2FC_nc.n, y = -log10(adjP_nc.n), size = abs(log2FC_nc.n)), color = 'gray', alpha = 0.5) +
+  geom_point(data = df_dea %>% filter(isSignificant_nc.n & log2FC_nc.n > 0), aes(x = log2FC_nc.n, y = -log10(adjP_nc.n), size = abs(log2FC_nc.n)), color = '#BC3C29', alpha = 0.8) +
+  geom_point(data = df_dea %>% filter(isSignificant_nc.n & log2FC_nc.n < 0), aes(x = log2FC_nc.n, y = -log10(adjP_nc.n), size = abs(log2FC_nc.n)), color = '#0072B5', alpha = 0.8) +
+  scale_size(name = '|log2 (Fold change)|', limits = c(0, 10), breaks = c(2, 4, 6), labels = c(2, 4, 6), range = c(2, 6)) +
+  geom_hline(yintercept = -log10(0.05), lty = 4, lwd = 0.6, alpha = 0.8) +
+  geom_vline(xintercept = log2(1.2) * c(1, -1),lty = 4,lwd = 0.6, alpha = 0.8) +
+  theme_classic() +
+  theme(legend.position = 'right',
+        panel.border = element_rect(fill = NA, color = "black", size = 0.5, linetype = "solid"),
+        axis.title.x = element_text(size = 15), axis.title.y = element_text(size = 15),
+        axis.text.x = element_text(size = 14, color = "black"),
+        axis.text.y = element_text(size = 14, color = "black"),
+        plot.title = element_text(size = 20, face = "bold", hjust = 0.45),
+  )+
+  labs(x = "log2 (Fold change)", y = "-log10 (Adj. P value)") +
+  guides(size = guide_legend(title = '|log2 (Fold change)|'),) +
+  annotate("text", x = -4, y = 20, label = str_c("Down-regulated:\nn = ", sum(df_dea$isSignificant_nc.n & df_dea$log2FC_nc.n < 0)), size = 5) +
+  annotate("text", x = 4, y = 20, label = str_c("Up-regulated:\nn = ", sum(df_dea$isSignificant_nc.n & df_dea$log2FC_nc.n > 0)), size = 5)
+
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_nontumor-normal_20230725.pdf', p3, width = 8, height = 7)
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_volcano_nontumor-normal_wolegend_20230725.pdf', p3+theme(legend.position = 'none'), width = 7, height = 7)
+
+df_dea %>% rio::export('PUH_allSample_differentiation_rmBrainPlasma_addLabels_20230725.xlsx')
+
+up_f.c <- df_dea$Protein[df_dea$isSignificant_f.c & df_dea$log2FC_f.c > 0]
+up_c.nc <- df_dea$Protein[df_dea$isSignificant_c.nc & df_dea$log2FC_c.nc > 0]
+up_nc.n <- df_dea$Protein[df_dea$isSignificant_nc.n & df_dea$log2FC_nc.n > 0]
+down_f.c <- df_dea$Protein[df_dea$isSignificant_f.c & df_dea$log2FC_f.c < 0]
+down_c.nc <- df_dea$Protein[df_dea$isSignificant_c.nc & df_dea$log2FC_c.nc < 0]
+down_nc.n <- df_dea$Protein[df_dea$isSignificant_nc.n & df_dea$log2FC_nc.n < 0]
+up_list <- list(`Fetal vs. Tumor` = up_f.c,
+                `Tumor vs. Non-tumor` = up_c.nc,
+                `Non-tumor vs. Normal` = up_nc.n)
+down_list <- list(`Fetal vs. Tumor` = down_f.c,
+                  `Tumor vs. Non-tumor` = down_c.nc,
+                  `Non-tumor vs. Normal` = down_nc.n)
+
+
+
+p1 <- VennDiagram::venn.diagram(x = up_list,
+                               resolution = 300,
+                               col='#A81B3C', 
+                               fill='#A81B3C',alpha=0.8,
+                               # fill=c("#EB495C", "#2DCC62FD", "#3C65D6"), 
+                               main="Upregulation",
+                               #sub = rep,
+                               main.cex = 4, 
+                               sub.cex = 3,
+                               cex = 4,
+                               cex.lab=4,
+                               cat.cex=4,
+                               imagetype = "tiff", 
+                               filename = NULL,disable.logging = T,
+                               width = 5000, height = 5000
+)
+p2 <- VennDiagram::venn.diagram(x = down_list,
+                                resolution = 300,
+                                col='#19199E', 
+                                fill='#19199E',alpha=0.8,
+                                # fill=c("#EB495C", "#2DCC62FD", "#3C65D6"), 
+                                main="Downregulation",
+                                #sub = rep,
+                                main.cex = 4, 
+                                sub.cex = 3,
+                                cex = 4,
+                                cex.lab=4,
+                                cat.cex=4,
+                                imagetype = "tiff", 
+                                filename = NULL,disable.logging = T,
+                                width = 5000, height = 5000
+)
+pdf('PUH_allSample_differentiation_rmBrainPlasma_VennDiagram_20230726.pdf', width = 20, height = 20)
+grid::grid.newpage(); grid::grid.draw(p1)
+grid::grid.newpage(); grid::grid.draw(p2)
+graphics.off()
+
+
+# 2. heatmap --------------------------------------------------------------
+df_wilcox_test <- rio::import('PUH_allSample_differentiation_rmBrainPlasma_20230725.xlsx') # same as 20230712
+
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 35
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 187
+
+file_info <- all1 %>%
+  filter(anatomical_classification != 'plasma') %>% 
+  select(FileName, tissue_name, sample_type, anatomical_classification) %>% 
+  rename(organ = anatomical_classification) %>% 
+  mutate(sample_type = sapply(sample_type, function(x) {switch(x, adjacent = 'Noncancerous', carcinoma = 'Cancerous', x)}))
+# file_info[file_info$tissue_name %in% c('fetal telencephalon', 'fetal mesencephalon', 'fetal myelencephalon', 'fetal metencephalon'), 'organ'] <- 'brain' # set fetal brain to organ brain
+
+# file_info[which(file_info$organ == 'brain'), 'sample_type'] <- 'Brain'
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+
+file_info1 <- file_info %>% slice(-which(organ == 'brain'))
+file_info2 <- file_info %>% slice(which(organ == 'brain'))
+file_info <- rbind(file_info1, file_info2)
+
+heatmat <- cbind(
+  mat[c(prot_diff_up, prot_diff_down), ],
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Fetal'))], # brain_F
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Cancerous'))], # brain_C
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Noncancerous'))], # brain_NC
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Normal'))] # brain_N
+)
+dim(heatmat) # 222 1768
+
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+
+
+
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+a <- pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_rmBrainPlasma_FCNcN_DEP_50NA_addBrain_addGlio_heatmap_20230725.pdf',
+  width = 15, height = 17
+)
+
+list(matrix = heat[a$tree_row$order, ], label = file_info) %>% rio::export('PUH_allSample_differentiation_rmBrainPlasma_FCNcN_DEP_50NA_addBrain_addGlio_heatmap_20230725.xlsx')
+
+
+
+## get median matrix
+df_lbl <- file_info %>% rownames_to_column('FileName')
+df_lbl[df_lbl$organ != 'brain', 'organ'] <- 'notBrain'
+names(df_lbl$sample_type) <- NULL
+
+filename_split <- plyr::dlply(df_lbl, c('sample_type', 'organ'), function(dfsub){
+  dfsub$FileName
+})
+
+
+mat <- df[rownames(mat), ]
+dim(mat) # 12123  1781
+
+mat_median <- sapply(filename_split, function(files){
+  apply(mat[, files], 1, function(x) median(x, na.rm = T))
+})
+mat_median <- mat_median[, c('Fetal.notBrain', 'Cancerous.notBrain', 'Noncancerous.notBrain', 'Normal.notBrain', 'Cancerous.brain', 'Noncancerous.brain', 'Normal.brain')] # columns arrange
+mat_median_scale <- apply(mat_median, 1, scale) %>% t() %>% data.frame()
+quantile(mat_median_scale, na.rm = T)
+colnames(mat_median_scale) <- colnames(mat_median)
+
+#breaks
+my_breaks <- seq(-2, 2, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+
+# file_info %>% count(organ) # 65 organs
+heat <- mat_median_scale[c(prot_diff_up, prot_diff_down), ]
+ann_col <- data.frame(Sample_type = c('Fetal', 'Tumor', 'Non-tumor', 'Normal', 'Tumor', 'Non-tumor', 'Normal'),
+                      row.names = colnames(heat))
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+Sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Tumor', 'Non-tumor', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(Sample_type = Sample_type_colors)
+
+
+b <- pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-2,2,2),
+  breaks = my_breaks,
+  fontsize_col = 6,
+  border_color = F,
+  annotation_col = ann_col,
+  # annotation_row = ann_row,
+  gaps_col = 4,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_rmBrainPlasma_FCNcN_DEP_50NA_addBrain_addGlio_median_heatmap_20230725.pdf',
+  width = 7, height = 20
+)
+
+b.same <- pheatmap::pheatmap(
+  heat[b$tree_row$order, ],
+  color = my_colors,
+  legend_breaks = seq(-2,2,2),
+  breaks = my_breaks,
+  fontsize_col = 6,
+  border_color = F,
+  annotation_col = ann_col,
+  # annotation_row = ann_row,
+  gaps_col = 4,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = F, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_rmBrainPlasma_FCNcN_DEP_50NA_addBrain_addGlio_median_heatmap_20230725.pdf',
+  width = 5, height = 25
+)
+
+dfprot <- rio::import('//172.16.13.136/TPHP/TPL/libs/20220616_fraglib/protein.tsv')
+protinfo <- heat[b$tree_row$order, ] %>%
+  rownames_to_column('Protein') %>% 
+  left_join(dfprot %>% select(`Protein ID`, Gene, `Entry Name`, `Protein Description`), by = c(Protein = 'Protein ID'))%>%
+  left_join(df_wilcox_test)
+
+
+list(matrix = protinfo, label = ann_col) %>% rio::export('PUH_allSample_differentiation_rmBrainPlasma_FCNcN_DEP_50NA_addBrain_addGlio_median_heatmap_20230725.xlsx')
+
+
+
+# 3. GO enrichment --------------------------------------------------------
+dfprot <- rio::import('//172.16.13.136/TPHP/TPL/libs/20220616_fraglib/protein.tsv')
+prot2gene <- dfprot$Gene
+names(prot2gene) <- dfprot$`Protein ID`
+
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 35
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 187
+
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+#BP
+goall_BP_up <- enrichGO(prot_diff_up, OrgDb = org.Hs.eg.db,
+                             ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05,
+                             readable = T, minGSSize = 1, maxGSSize = 30000)
+goall_BP_up2 <- simplify(goall_BP_up, cutoff=0.7, by="p.adjust", select_fun = min)
+df_GOBP_up1 <- DOSE::gsfilter(goall_BP_up, min = 10, max = 5000)[]
+df_GOBP_up2 <- DOSE::gsfilter(goall_BP_up2, min = 10, max = 5000)[]
+
+goall_BP_down <- enrichGO(prot_diff_down, OrgDb = org.Hs.eg.db,
+                               ont = "BP", keyType = "UNIPROT", pvalueCutoff = 0.05,
+                          readable = T, minGSSize = 1, maxGSSize = 30000)
+goall_BP_down2 <- simplify(goall_BP_down, cutoff=0.7, by="p.adjust", select_fun = min)
+df_GOBP_down1 <- DOSE::gsfilter(goall_BP_down, min = 10, max = 5000)[]
+df_GOBP_down2 <- DOSE::gsfilter(goall_BP_down2, min = 10, max = 5000)[]
+
+df_GOBP <- plyr::ldply(list(Up = df_GOBP_up2, Down = df_GOBP_down2), .id = 'Regulation')
+df_GOBP$pvalue <- -log10(df_GOBP$pvalue)
+df_GOBP$pvalue <- ifelse(df_GOBP$Regulation == 'Up', df_GOBP$pvalue, -df_GOBP$pvalue)
+df_GOBP %<>% arrange(desc(pvalue))
+# df_GOBP$Count <- as.factor(df_GOBP$Count)
+# df_GOBP$Description %<>% str_to_sentence()
+
+# library(ggcharts)
+quantile(df_GOBP$pvalue)
+#         0%        25%        50%        75%       100% 
+# -11.177801  -4.377048  -2.986546   2.817936  14.133970 
+GO_BP <- ggplot(df_GOBP,aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-18, 8, 2), labels = abs(seq(-18, 8, 2))) +
+  scale_y_discrete(limits=rev(df_GOBP$Description))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_GOBP_v2_20230726.pdf', GO_BP, width = 20, height = 30)
+rio::export(df_GOBP, 'PUH_allSample_differentiation_rmBrainPlasma_GOBP_v2_20230726.xlsx')
+
+GO_BP <- ggplot((df_GOBP %>% dplyr::slice(1:5, (nrow(df_GOBP)-4):nrow(df_GOBP))),aes(pvalue,Description))+
+  geom_point(aes(size=Count,color=Regulation))+
+  labs(x="-log10 (p value)",y="Pathway name",title="GO Enrichment Biological Process")+
+  scale_x_continuous(breaks=seq(-10, 14, 4), labels = abs(seq(-10, 14, 4))) +
+  scale_y_discrete(limits=rev(df_GOBP %>% dplyr::slice(1:5, (nrow(df_GOBP)-4):nrow(df_GOBP)) %>% pull(Description)))+
+  scale_color_manual(values=c(Up = "#BC3C29", Down = "#293CBC"))+
+  # scale_size_manual(values = c('9' = 5, '11' = 7)) +
+  theme_classic()+
+  theme(axis.title.x = element_text(size = 15),axis.title.y = element_text(size = 15))+
+  theme(axis.text.x = element_text(size = 14,color="black"),axis.text.y = element_text(size = 14,color="black"))+
+  theme(legend.text=element_text(size=15),legend.title = element_text(size=15))+
+  theme(plot.title = element_text(size = 15, face = "bold"))
+ggsave('PUH_allSample_differentiation_rmBrainPlasma_GOBP_top20UpDown_v2_20230726.pdf', GO_BP, width = 9, height = 5)
+
+
+
+
+
+
+
+
+```
+
+## baxplot
+```{r}
+prot_selected <- c('P08294', 'P11216', 'P01034')
+df_box <- heatmat[prot_selected, ] %>% t() %>% as.data.frame() %>% 
+  rownames_to_column('FileName') %>% 
+  left_join(tsne_df %>% select(FileName, all_of(sample_type)) %>% distinct()) %>% 
+  pivot_longer(cols = prot_selected, names_to = 'Protein', values_to = 'Intensity')
+
+df_box$sample_type %<>% as.character()
+# df_box <- df_compare_mean %>% select(1:2, all_of(prot_selected)) %>% 
+#   pivot_longer(cols = prot_selected, names_to = 'Protein', values_to = 'Intensity')
+df_box[df_box$sample_type == 'Cancerous', 'sample_type'] <- 'Tumor'
+df_box[df_box$sample_type == 'Noncancerous', 'sample_type'] <- 'Non-tumor'
+
+brains <- tsne_df %>% filter(anatomical_classification %in% c('brain')) %>% pull(FileName)
+df_box$sample_type[(df_box$FileName %in% brains)] %<>% str_c('_brain')
+df_box$sample_type %<>% factor(levels = c('Fetal', 'Tumor', 'Non-tumor', 'Normal', 'Tumor_brain', 'Non-tumor_brain', 'Normal_brain'), ordered = T)
+df_box$color <- str_replace(df_box$sample_type, '_brain', '')
+df_box$fill <- ifelse(str_detect(df_box$sample_type, '_brain$'), 'Brain', 'Others')
+
+df_box_log2 <- df_box
+df_box_log2$Intensity %<>% log2()
+
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#AAAAAA', 'white') %>% setNames(c('Tumor', 'Non-tumor', 'Normal', 'Fetal', 'Brain', 'Others'))
+
+plot_ls <- plyr::dlply(df_box_log2, 'Protein', function(dfsub){
+  p <- ggplot(dfsub) +
+  aes(x = sample_type, y = Intensity) +
+  geom_jitter(alpha = 0.4, size = 0.1) +
+  geom_boxplot(aes(color = color, fill = fill), outlier.shape = NA, width = 0.4) +
+  scale_color_manual(values = sample_type_colors) +
+  scale_fill_manual(values = sample_type_colors) +
+  labs(
+    x = '', y = 'log2 Intensity', title = dfsub$Protein[1]
+  )+
+  theme(#panel.grid = element_blank(),
+        #panel.grid.major = element_blank(),
+        #panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,color = 'black'),
+        axis.line = element_line(color = 'black'),
+        axis.line.x = element_blank(),
+        plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+  )+
+  theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'right',
+        legend.title = element_text(size = 15, color = 'black'))+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 0),
+        #axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+  )+
+  theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+        axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+        # axis.ticks.y = element_blank()
+  )
+  
+  p + ggpubr::geom_signif	(#aes(x = sample_type, y = Intensity),
+                  # data = dfsub,
+                  comparisons = list(c('Fetal', 'Tumor'),
+                                     c('Tumor', 'Non-tumor'),
+                                     c('Non-tumor', 'Normal'),
+                                     c('Tumor_brain', 'Non-tumor_brain'),
+                                     c('Non-tumor_brain', 'Normal_brain')
+                                     ),
+                  step_increase = 0.05,
+                  #map_signif_level = T,
+                  # test = function(x1, x2) t.test(x1, x2, alternative = 'less')) # 
+                  test = wilcox.test) # 
+})
+
+p <- ggpubr::ggarrange(plotlist = plot_ls, ncol = 1)
+ggsave('PUH_P08294_P11216_P01034_expr_20230726.pdf', p, width = 10, height = 10)
+
+df_p <- plyr::ddply(df_box_log2, 'Protein', function(dfsub){
+  # dfsub <- df_box_log2 %>% filter(Protein == 'P01034')
+  my_comparisons <- list(c('Fetal', 'Tumor'), c('Tumor', 'Non-tumor'), c('Non-tumor', 'Normal'), c('Tumor_brain', 'Non-tumor_brain'), c('Non-tumor_brain', 'Normal_brain'))
+  
+  df_p <- plyr::ldply(my_comparisons, function(comp){
+    x1 <- na.omit(dfsub %>% filter(sample_type == comp[1]) %>% pull(Intensity))
+    x2 <- na.omit(dfsub %>% filter(sample_type == comp[2]) %>% pull(Intensity))
+    p <- wilcox.test(x1, x2, paired = F, var.equal = F)$p.value
+    data.frame(Protein = dfsub$Protein[1], Group1 = comp[1], Group2 = comp[2], p = p) %>% return()
+  })
+  df_p$p.adj <- p.adjust(df_p$p, method = 'BH')
+  return(df_p)
+})
+rio::export(df_p, 'PUH_P08294_P11216_P01034_expr_20230726.xlsx')
+```
+
+## heatmap
+```{r}
+# 126/222 DEPs with missing ratio <= 50% in fetal, tumor, non-tumor, and normal
+# (95/187 down + 31/35 up)
+prot_diff_up <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Up') %>% pull(Protein) # 35
+prot_diff_down <- df_wilcox_test %>% filter(isSignificant) %>% filter(Regulation == 'Down') %>% pull(Protein) # 187
+
+
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+
+file_info <- all1 %>%
+  filter(anatomical_classification != 'plasma') %>% 
+  select(FileName, tissue_name, sample_type, anatomical_classification) %>% 
+  rename(organ = anatomical_classification) %>% 
+  mutate(sample_type = sapply(sample_type, function(x) {switch(x, adjacent = 'Noncancerous', carcinoma = 'Cancerous', x)}))
+# file_info[file_info$tissue_name %in% c('fetal telencephalon', 'fetal mesencephalon', 'fetal myelencephalon', 'fetal metencephalon'), 'organ'] <- 'brain' # set fetal brain to organ brain
+
+# file_info[which(file_info$organ == 'brain'), 'sample_type'] <- 'Brain'
+rownames(file_info) <- file_info$FileName
+file_info %<>% select(-FileName) %>%
+  mutate(sample_type = factor(sample_type, levels = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal'), ordered = T)) %>% 
+  arrange(sample_type, organ)
+
+file_info1 <- file_info %>% slice(-which(organ == 'brain'))
+file_info2 <- file_info %>% slice(which(organ == 'brain'))
+file_info <- rbind(file_info1, file_info2)
+
+heatmat <- cbind(
+  mat[c(prot_diff_up, prot_diff_down), ],
+  # df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Fetal'))], # brain_F
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Cancerous'))], # brain_C
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Noncancerous'))], # brain_NC
+  df[c(prot_diff_up, prot_diff_down), rownames(file_info %>% filter(organ == 'brain', sample_type == 'Normal'))] # brain_N
+)
+dim(heatmat) # 222 1768
+
+
+heatmat1 <- heatmat[apply(heatmat[, f_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in fetal
+heatmat2 <- heatmat1[apply(heatmat1[, c_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in cancerous
+heatmat3 <- heatmat2[apply(heatmat2[, nc_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in noncancerous
+heatmat4 <- heatmat3[apply(heatmat3[, n_index], 1, function(x) sum(is.na(x)) / length(x)) <= 0.5, ] # missing ratio <= 50% in normal
+heatmat4 <- log2(heatmat4)
+mat_scale <- apply(heatmat4, 1, scale) %>% t() %>% data.frame()
+quantile(mat_scale, na.rm = T)
+colnames(mat_scale) <- colnames(heatmat)
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+  colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+)
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+
+
+
+# file_info %>% count(organ) # 65 organs
+heat <- mat_scale[, rownames(file_info)]
+
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organ_colors <- str_c('#', df_color$color)
+set.seed(2023)
+organ_colors %<>% append(sample(organ_colors, length(unique(file_info$organ)) - length(organ_colors)))
+names(organ_colors) <- sort(unique(file_info$organ))
+sample_type_colors <- c('#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#F39800') %>% setNames(c('Cancerous', 'Noncancerous', 'Normal', 'Fetal', 'Brain'))
+ann_colors <- list(sample_type = sample_type_colors, organ = organ_colors)
+
+pheatmap::pheatmap(
+  heat,
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = T, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_heatmap_20230726.pdf',
+  width = 15, height = 17
+)
+dim(heat) # 126 1763
+
+```
+
+
+## ssGSEA
+```{r}
+# BiocManager::install('GSVA')
+# BiocManager::install('GSEABase')
+# remotes::install_github("HenrikBengtsson/future.apply@develop")
+
+
+# BiocManager::install("GSVA")
+# install.packages(c("matrixStats","irlba","rsvd"))
+library(GSVA)
+library(GSEABase)
+
+# transform prot x file matrix to prot x sampleType matrix
+df_lbl <- file_info %>% rownames_to_column('FileName')
+df_lbl[df_lbl$organ != 'brain', 'organ'] <- 'notBrain'
+names(df_lbl$sample_type) <- NULL
+
+filename_split <- plyr::dlply(df_lbl, c('sample_type', 'organ'), function(dfsub){
+  dfsub$FileName
+})
+
+mat_median <- sapply(filename_split, function(files){
+  rowMedians(heatmat4[, files], na.rm = T)
+})
+rownames(mat_median) <- rownames(heatmat4)
+# mat_median <- mat_median[, c('Fetal.notBrain', 'Cancerous.notBrain', 'Noncancerous.notBrain', 'Normal.notBrain', 'Fetal.brain', 'Cancerous.brain', 'Noncancerous.brain', 'Normal.brain')] # arrange
+mat_median <- mat_median[, c('Fetal.notBrain', 'Cancerous.notBrain', 'Noncancerous.notBrain', 'Normal.notBrain',  'Cancerous.brain', 'Noncancerous.brain', 'Normal.brain')] # arrange
+mat_median[is.na(mat_median)] <- min(mat_median, na.rm = T) + log2(0.8)
+
+# uniprotid to symbol
+writeClipboard(rownames(mat_median))
+df_query <- rio::import('idmapping_2023_07_22.xlsx')
+symbol_vec <- c()
+for(i in 1:nrow(mat_median)){
+  symbol_vec[i] <- my_uniprot2symbol(rownames(mat_median)[i])
+}
+symbol_vec[75] <- 'IGK' # P0DOX7; no resource
+# symbol_vec[73] <- 'IGL1' # P0DOX8; no resource
+for(i in 76:nrow(mat_median)){
+  symbol_vec[i] <- my_uniprot2symbol(rownames(mat_median)[i])
+}
+df_query_map <- data.frame(From = rownames(mat_median), symbol = symbol_vec) %>% full_join(df_query)
+
+#  ID mapping 
+df_query_map %>% filter(symbol != To)
+# [1] From   symbol To    
+# <0 > (0-row.names)
+
+#  UniprotID  symbol
+df_query_map %>% count(From) %>% count(n)
+#   n  nn
+# 1 1 131
+setdiff(rownames(mat_median), df_query_map$From)
+# character(0)
+
+rownames(mat_median) <- symbol_vec
+
+
+##### GSEA  http://www.gsea-msigdb.org/gsea/msigdb/index.jsp
+#  human http://www.gsea-msigdb.org/gsea/msigdb/human/collections.jsp
+#  mouse http://www.gsea-msigdb.org/gsea/msigdb/mouse/collections.jsp
+# h1gmt <- getGmt("h.all.v7.4.symbols.gmt") # hallmark
+gogmt <- getGmt("c5.go.bp.v2023.1.Hs.symbols.gmt") # GO
+ssgsea <- gsva(
+  expr = mat_median,# a matrix of expression values where rows correspond to genes and columns correspond to samples.
+  gset.idx.list = gogmt,# min.sz=15, max.sz=500,
+  method = 'ssgsea', kcdf = 'Gaussian', abs.ranking = T,
+)
+
+# min-max normalization
+ssgsea.1 <- ssgsea
+for (i in colnames(ssgsea)) {
+  #i <- colnames(ssgsea)[1]
+  ssgsea.1[,i] <- (ssgsea[,i] -min(ssgsea[,i]))/(max(ssgsea[,i] )-min(ssgsea[,i] ))
+  
+}
+
+pheatmap::pheatmap(
+  ssgsea.1,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  color =colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10
+)
+
+
+
+
+# limma 
+library(limma)
+
+# set groups
+group <- factor(c('Fetal', 'C', 'NC', 'N', rep('Anyway', 4)))
+group <- factor(c('Fetal', 'C', 'NC', 'N', 'Fetal', rep('Brain', 3)))
+group <- factor(c('Fetal', 'C', 'NC', 'N', rep('Brain', 3)))
+# group <- factor(c('Fetal', 'C', 'NC', 'N'))
+
+design <- model.matrix(~0+group)
+colnames(design) <- levels(group)
+rownames(design) <- colnames(ssgsea.1)[1:7]
+
+compare <- makeContrasts(contrasts = c('Fetal - C', 'C - NC', 'NC - N'), levels = design)
+fit <- lmFit(ssgsea.1[, 1:7], design)
+fit2 <- contrasts.fit(fit, compare)
+fit3 <- eBayes(fit2)
+Diff <- topTable(fit3, number=Inf) %>% dplyr::filter(P.Value < 0.01)
+
+Diff %>% rownames_to_column('Pathway') %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_20230726.xlsx')
+
+
+heat_ssgsea.1 <- ssgsea.1[rownames(Diff), ]
+heat_ssgsea.1 <- heat_ssgsea.1[apply(heat_ssgsea.1, 1, function(x) identical(sort(x[1:4]), x[1:4])|identical(sort(x[1:4], decreasing = T), x[1:4])), ]
+a <- pheatmap::pheatmap( # to perform a "hc" tree
+  heat_ssgsea.1[, 1:4],
+  scale = "none",
+  cluster_rows = T,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  color =colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_20230726.pdf',
+  width = 10, height = 15
+)
+
+heat_ssgsea.1 <- heat_ssgsea.1[a$tree_row$order, ]
+ann_col <- data.frame(
+  sample_type = c('Fetal', 'Cancerous', 'Noncancerous', 'Normal', 'Cancerous', 'Noncancerous', 'Normal'),
+  row.names = colnames(heat_ssgsea.1)
+)
+b <- pheatmap::pheatmap(
+  heat_ssgsea.1,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v2_20230726.pdf',
+  width = 10, height = 15
+)
+
+heat_ssgsea.1 %>%
+  as.data.frame() %>%
+  rownames_to_column('Pathway') %>%
+  rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v2_20230726.xlsx')
+
+
+```
+
+## not finished
+```{r}
+### GOBP terms simplify
+# BiocManager::install('RamiGO')
+library(rrvgo)
+# x <- rownames(Diff)[1] %>% str_replace('^GOBP_', '') %>% str_replace_all('_', ' ')
+
+Diff1 <- Diff[rownames(heat_ssgsea.1), ]
+
+msigdbC52GO <- function(x){
+  # QuickGO version 2022-03-14
+  x %<>% str_replace_all(' ', '%20')
+  my_html <- rvest::read_html(stringr::str_glue('https://www.ebi.ac.uk/QuickGO/services/internal/search/ontology?query={x}')) # get json
+  # for geneproduct:  https://www.ebi.ac.uk/QuickGO/services/geneproduct/search?query=
+  my_json <- my_html %>%
+    rvest::html_text() %>%
+    jsonlite::fromJSON()
+  
+  return(my_json$results[1, 1:2])
+}
+
+GO_query_rlt <- list()
+for(i in 1:nrow(Diff1)){
+  cat(i, '...\r')
+  x <- rownames(Diff1)[i] %>% str_replace('^GOBP_', '') %>% str_replace_all('_', ' ')
+  GO_query_rlt[[i]] <- msigdbC52GO(x)
+}
+names(GO_query_rlt) <- rownames(Diff1)
+df_GO <- plyr::ldply(GO_query_rlt, .id = 'msigdb_name')
+
+# go_analysis <- Diff1
+simMatrix <- calculateSimMatrix(df_GO$id,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+# scores <- setNames(-log10(Diff1$adj.P.Val), df_GO$id)
+scores <- setNames(-log10(Diff1$P.Value), df_GO$id)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+df_reduce <- reducedTerms %>%
+  left_join(df_GO, by = c(go = 'id')) %>%
+  dplyr::rename(score_parent = parent,
+                score_parentTerm = parentTerm)
+df_reduce <- plyr::ddply(df_reduce, 'cluster', function(dfsub){
+  dfsub %<>% arrange(desc(size))
+  dfsub$parent <- dfsub$go[1]
+  dfsub$parentTerm <- dfsub$term[1]
+  return(dfsub)
+})
+
+# rio::export(df_reduce, 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230726.xlsx')
+
+# pdf('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230726.pdf', width = 10, height = 10)
+# par(mfrow = c(2, 2))
+heatmapPlot(simMatrix,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix, reducedTerms)
+treemapPlot(reducedTerms)
+wordcloudPlot(reducedTerms, min.freq=1, colors="black")
+# graphics.off()
+
+
+msigdb2go <- df_GO$id
+names(msigdb2go) <- df_GO$msigdb_name
+rownames(heat_ssgsea.1) <- msigdb2go[rownames(heat_ssgsea.1)]
+
+#
+pheatmap::pheatmap(
+  heat_ssgsea.1,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_v3_20230726.pdf',
+  width = 10, height = 15
+)
+
+
+#### 2.4.3.x GOBP terms simplify
+1. matrix
+2. up- / down- regulation
+##### 2.4.3.x.1 matrix
+```{r}
+# matrixpatternGO terms
+same_terms <- heat_ssgsea.1 %>%
+  as.data.frame %>% 
+  rownames_to_column('go') %>% 
+  mutate(go = str_replace(go, '^GO\\.', 'GO:')) %>% 
+  plyr::dlply(., colnames(ssgsea.1), function(dfsub){
+    dfsub$go
+  })
+length(same_terms) # 7
+same_terms1 <- same_terms[sapply(same_terms, length) > 1] # GO terms > 1
+names(same_terms1) <- seq_along(same_terms1)
+
+Diff2 <- Diff1 %>% # combine
+  rownames_to_column('msigdb_name') %>% 
+  left_join(df_GO)
+rownames(Diff2) <- Diff2$msigdb_name
+
+df_same_term <- plyr::ldply(same_terms1, function(term_vec){
+  Diff2 %>% filter(id %in% term_vec)
+}, .id = 'Group')
+df_same_term$Group %<>% as.character()
+
+term_relations <- as.list(GO.db::GOBPANCESTOR)[df_same_term$id]
+df_term_relations <- plyr::ldply(term_relations, function(x) {
+  data.frame(from = x)
+}, .id = 'to')
+df_term_relations$to %<>% as.character()
+df_term_relations %<>%
+  dplyr::select(from, to) %>% 
+  dplyr::filter(from %in% unlist(same_terms1), to %in% unlist(same_terms1))
+
+# add root
+df_term_relations <-
+  data.frame(from = 'all', to = unique(c(as.character(df_term_relations$to), df_term_relations$from))) %>%
+  rbind(df_term_relations)
+
+# add Group
+vertices <- data.frame(
+  name = df_same_term$id,
+  group = df_same_term$Group
+  # cluster = sample(letters[1:4], length(name), replace=T),
+  # value = 1
+) %>% dplyr::filter(name %in% unlist(df_term_relations))
+vertices %<>% rbind(data.frame(name = 'all', group = 0))
+
+v_colors <- RColorBrewer::brewer.pal(9, 'Set1') %>% setNames(c(1:8, 0))
+# 1         2         3         4         5         6         7         8         0 
+"#E41A1C"; "#377EB8"; "#4DAF4A"; "#984EA3"; "#FF7F00"; "#FFFF33"; "#A65628"; "#F781BF"; "#999999" 
+
+mygraph <- igraph::graph_from_data_frame(df_term_relations, vertices = vertices)
+# pdf('identical_expression_GO_network_20230726.pdf', width = 10, height = 10)
+set.seed(2023)
+plot(mygraph, vertex.color = v_colors[vertices$group], # Node color
+     vertex.frame.color = "Forestgreen",            # Node border color
+     # vertex.shape=c("circle","square"),             # One of none, circle, square, csquare, rectangle crectangle, vrectangle, pie, raster, or sphere
+     vertex.size=15,                          # Size of the node (default is 15)
+     vertex.size2=NA,                               # The second size of the node (e.g. for a rectangle))
+     vertex.label.dist=0,                           # Distance between the label and the vertex
+     vertex.label.degree=0 ,                        # The position of the label in relation to the vertex (use pi)
+     edge.color='black',           # Edge color
+     edge.width=1,                        # Edge width, defaults to 1
+     edge.arrow.size=0.5,                           # Arrow size, defaults to 1
+     edge.arrow.width=0.5,                          # Arrow width, defaults to 1
+     edge.lty=c("solid")                           # Line type, could be 0 or blank, 1 or solid, 2 or dashed, 3 or dotted, 4 or dotdash, 5 or longdash, 6 or twodash
+     #edge.curved=c(rep(0,5), rep(1,5))            # Edge curvature, range 0-1 (FALSE sets it to 0, TRUE to 0.5)
+)
+# graphics.off()
+
+
+
+
+
+
+list(
+  v = vertices %>% left_join(dplyr::select(df_same_term, -Group), by = c(name = 'id')),
+  g = df_term_relations
+) %>% rio::export('identical_expression_GO_network_20230726.xlsx')
+
+terms_rm <- vertices$name %>% setdiff(
+  c('GO:0000041', 'GO:1902904', 'GO:1902742', 'GO:0071478', 'GO:0043254', 'GO:0060267', 'GO:0003014', 'GO:0021761', 'GO:0051962', 'GO:0010720', 'GO:1904406', 'GO:0050779', 'GO:0010985', 'all')
+)
+
+df_same_term_filtered <- df_same_term %>%
+  dplyr::filter(!(id %in% terms_rm))
+
+
+
+
+
+# up- / down- regulation
+Diff_down <- Diff2 %>% filter(logFC > 0, id %in% df_same_term_filtered$id)
+Diff_up <- Diff2 %>% filter(logFC < 0, id %in% df_same_term_filtered$id)
+df_GO_down <- df_GO %>% filter(msigdb_name %in% rownames(Diff_down))
+df_GO_up <- df_GO %>% filter(msigdb_name %in% rownames(Diff_up))
+
+#down
+simMatrix_down <- calculateSimMatrix(df_GO_down$id,
+                                     orgdb="org.Hs.eg.db",
+                                     ont="BP",
+                                     method="Rel")
+scores_down <- setNames(-log10(Diff_down$P.Value), df_GO_down$id)
+reducedTerms_down <- reduceSimMatrix(simMatrix_down,
+                                     scores_down,
+                                     threshold=0.7,
+                                     orgdb="org.Hs.eg.db")
+
+#up
+simMatrix_up <- calculateSimMatrix(df_GO_up$id,
+                                   orgdb="org.Hs.eg.db",
+                                   ont="BP",
+                                   method="Rel")
+scores_up <- setNames(-log10(Diff_up$P.Value), df_GO_up$id)
+reducedTerms_up <- reduceSimMatrix(simMatrix_up,
+                                   scores_up,
+                                   threshold=0.7,
+                                   orgdb="org.Hs.eg.db")
+
+list(down = reducedTerms_down %>% arrange(cluster), up = reducedTerms_up %>% arrange(cluster)) %>%
+  rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_up-down_20230726.xlsx')
+
+
+pdf('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_limmaFilter_termReduce_20230726.pdf', width = 10, height = 10)
+# par(mfrow = c(2, 2))
+heatmapPlot(simMatrix_up,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix_up, reducedTerms_up)
+treemapPlot(reducedTerms_up)
+wordcloudPlot(reducedTerms_up, min.freq=1, colors="black")
+heatmapPlot(simMatrix_down,
+            df_reduce ,row_cluster = F,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=10)
+scatterPlot(simMatrix_down, reducedTerms_down)
+treemapPlot(reducedTerms_down)
+wordcloudPlot(reducedTerms_down, min.freq=1, colors="black")
+graphics.off()
+
+
+
+#
+heat_sorted <- heat_ssgsea.1[c(rownames(reducedTerms_up), rownames(reducedTerms_down)), ]
+go2lbl <- str_glue("{str_remove(df_GO$msigdb_name, '^GOBP_') %>% str_replace_all('_', ' ') %>% str_to_sentence()} ({df_GO$id})")
+names(go2lbl) <- df_GO$id
+rownames(heat_sorted) <- go2lbl[rownames(heat_sorted)]
+
+pheatmap::pheatmap(
+  heat_sorted[c(2, 9, 7, 1, 3, 8, 11, 4:6, 10, 12, 14:16, 19:20, 13, 17:18), ],
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_20230726.pdf',
+  width = 8, height = 8
+)
+
+
+```
+
+##### 2.4.3.x.2 network
+```{r}
+go_terms <- c(rownames(reducedTerms_up), rownames(reducedTerms_down))
+go_term_pool <- sort(go_terms)
+# i <- 1 # counter
+while(T){ # GO tree growth
+  # cat(i, '...\r')
+  go_tree <- as.list(GO.db::GOBPANCESTOR[setdiff(go_term_pool, 'all')])
+  tmp_pool <- c(go_tree, names(go_tree)) %>% unlist() %>% unique() %>% sort()
+  if(length(go_term_pool) < length(tmp_pool)){
+    go_term_pool <- tmp_pool
+  } else{
+    break
+  }
+  # i <- i + 1
+}
+go_tree <- as.list(GO.db::GOBPANCESTOR[setdiff(go_term_pool, 'all')])
+edges <- plyr::ldply(go_tree, function(x) {
+  data.frame(from = x)
+}, .id = 'to')
+edges$to %<>% as.character()
+edges %<>% dplyr::select(from, to)
+
+# add root
+edges <-
+  data.frame(from = 'all', to = unique(c(as.character(edges$to), edges$from))) %>%
+  rbind(edges)
+edges %<>% distinct()
+edges$highlight <- ifelse(apply(edges, 1, function(x){ any(x %in% go_terms) }), 1, 0) %>% factor
+
+# add Group
+vs <- data.frame(
+  name = go_term_pool,
+  highlight = ifelse(go_term_pool %in% go_terms, 1, 0) %>% factor
+)
+
+v_colors <- c('#A62628', '#BBBBBB66') %>% setNames(c(1, 0))
+mygraph <- igraph::graph_from_data_frame(edges, vertices = vs)
+list(edges = edges, vertices = vs) %>% rio::export('GO_network_20terms_growthto_159v_1462e.xlsx')
+pdf('GO_network_20terms_growthto_159v_1462e.pdf', width = 30, height = 30)
+set.seed(2023)
+plot(mygraph, vertex.color = v_colors[as.character(vs$highlight)], # Node color
+     vertex.frame.color = "Forestgreen",            # Node border color
+     # vertex.shape=c("circle","square"),             # One of none, circle, square, csquare, rectangle crectangle, vrectangle, pie, raster, or sphere
+     vertex.size=5,                          # Size of the node (default is 15)
+     vertex.size2=NA,                               # The second size of the node (e.g. for a rectangle))
+     vertex.label.dist=0,                           # Distance between the label and the vertex
+     vertex.label.degree=0 ,                        # The position of the label in relation to the vertex (use pi)
+     edge.color=v_colors[as.character(edges$highlight)],           # Edge color
+     edge.width=1,                        # Edge width, defaults to 1
+     edge.arrow.size=0.5,                           # Arrow size, defaults to 1
+     edge.arrow.width=0.5,                          # Arrow width, defaults to 1
+     edge.lty=c("solid")                           # Line type, could be 0 or blank, 1 or solid, 2 or dashed, 3 or dotted, 4 or dotdash, 5 or longdash, 6 or twodash
+     #edge.curved=c(rep(0,5), rep(1,5))            # Edge curvature, range 0-1 (FALSE sets it to 0, TRUE to 0.5)
+)
+graphics.off()
+
+
+
+p <- ggraph::ggraph(mygraph, layout = 'dendrogram', circular = TRUE) + 
+  ggraph::geom_edge_diagonal(colour="grey") +
+  ggraph::scale_edge_colour_distiller(palette = "RdPu") +
+  ggraph::geom_node_text(aes(x = x*1.5, y=y*1.5, label=name, colour=highlight), size=2.7, alpha=1) +
+  ggraph::geom_node_point(aes(colour=highlight)) +
+  scale_colour_manual(values= c('0' = '#BBBBBB66', '1' = '#A62628')) +
+  scale_size_continuous( range = c(0.1,10) ) +
+  theme_void() +
+  theme(
+    legend.position="none",
+    plot.margin=unit(c(0,0,0,0),"cm"),
+  ) +
+  expand_limits(x = c(-1.3, 1.3), y = c(-1.3, 1.3))
+ggsave('GO_network_20terms_growthto_159v_1462e_dendro.pdf', p, width = 20, height = 20)
+
+
+# edges %>% group_by(to) %>% count() %>% arrange(n)
+
+
+
+```
+##### 2.4.3.x.3 heatmap update
+```{r}
+heat_sorted_final <- heat_sorted[c(7,2,4,9,1,3,5,11,6,8,10,12,14,15,16,19,20,13,17,18), ]
+
+pheatmap::pheatmap(
+  heat_sorted_final,
+  annotation_col = ann_col,
+  annotation_colors = ann_colors,
+  scale = "none",
+  cluster_rows = F,
+  cluster_cols = F,
+  show_rownames = T,
+  show_colnames = T,
+  gaps_col = 4,
+  color = colorRampPalette(c("blue", "white","red"))(100),
+  cellwidth = 10, cellheight = 15,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_20230715.pdf',
+  width = 8, height = 8
+)
+
+heat_sorted_final %>% as.data.frame() %>% rownames_to_column('GO') %>% rio::export('PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_20230715.xlsx')
+```
+
+
+### 2.4.4 containing proteins of some GOBP pathways
+```{r}
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+library(RColorBrewer)
+library(org.Hs.eg.db)
+
+# GOBP_data <- org.Hs.eg.db::get_GO_data("org.Hs.eg.db", "BP", "SYMBOL")
+
+go2gene <- toTable(org.Hs.egGO2ALLEGS)
+df_gene <- go2gene %>% filter(Ontology == 'BP', go_id %in% go_terms)
+df_gene <- clusterProfiler::bitr(
+  rownames(mat_median), fromType = "SYMBOL", toType = "ENTREZID", org.Hs.eg.db
+) %>% inner_join(df_gene, by = c(ENTREZID = 'gene_id'))
+df_gene$go_id %<>% factor(levels = str_extract(rownames(heat_sorted_final), 'GO:\\d+'), ordered = T)
+df_gene %<>% arrange(go_id)
+rio::export(df_gene, 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_GSVA_heatmap_clusterGOterm_genelist_20230715.xlsx')
+
+df_query <- rio::import('idmapping_2023_07_12.xlsx')
+# uniprot2symbol <- df_query$To
+# names(uniprot2symbol) <- df_query$From
+
+
+heat_new <- heat[df_query$From, ]
+rownames(heat_new) <- df_query$To
+
+pheatmap::pheatmap(
+  heat_new[unique(df_gene$SYMBOL), ],
+  color = my_colors,
+  legend_breaks = seq(-4,4,2),
+  breaks = my_breaks,
+  fontsize_col = 8,
+  border_color = F,
+  annotation_col = file_info,
+  # annotation_row = ann_row,
+  gaps_col = c(which(!duplicated(file_info1$sample_type))[-1], (which(!duplicated(file_info2$sample_type)) + nrow(file_info1))) - 1,
+  # gaps_col = cumsum(table(ann_col$tissue))[-length(cumsum(table(ann_col$tissue)))],
+  # gaps_row = cumsum(table(row.tissue))[-length(cumsum(table(row.tissue)))],
+  fontsize_row=10,
+  annotation_colors = ann_colors,
+  na_col = "grey70",#scale = "row",
+  cluster_rows = F, cluster_cols = F,
+  show_rownames = T, show_colnames = F,
+  cellwidth = 0.1, cellheight = 8,
+  fontsize = 10,
+  filename = 'PUH_allSample_differentiation_FCNcN_DEP_50NA_addBrain_addGlio_rmPlasma_heatmap_GSVAenrichedOnly.pdf'
+)
+
+```
+
+
+
+
+# GO simplify
+## demo
+```{r}
+BiocManager::install("rrvgo")
+library(rrvgo)
+
+go_analysis <- read.delim(system.file("extdata/example.txt", package="rrvgo"))
+simMatrix <- calculateSimMatrix(go_analysis$ID,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+scores <- setNames(-log10(go_analysis$qvalue), go_analysis$ID)
+reducedTerms <- reduceSimMatrix(simMatrix,
+                                scores,
+                                threshold=0.7,
+                                orgdb="org.Hs.eg.db")
+
+heatmapPlot(simMatrix,
+            reducedTerms,
+            annotateParent=TRUE,
+            annotationLabel="parentTerm",
+            fontsize=6)
+
+scatterPlot(simMatrix, reducedTerms)
+
+treemapPlot(reducedTerms)
+
+wordcloudPlot(reducedTerms, min.freq=1, colors="black")
+
+
+
+```
+
+## change code
+```{r}
+simMatrix <- calculateSimMatrix(go_analysis$ID,
+                                orgdb="org.Hs.eg.db",
+                                ont="BP",
+                                method="Rel")
+
+
+
+
+# calculateSimMatrix
+x=go_analysis$ID
+orgdb="org.Hs.eg.db"
+ont="BP"
+method="Rel"
+keytype = "ENTREZID"
+
+
+{
+  semdata = GOSemSim::godata(orgdb, ont = ont, keytype = keytype)
+  # ont <- match.arg(ont)
+  # method <- match.arg(method)
+  if (all(is(orgdb) != "OrgDb")) {
+    orgdb <- GOSemSim::load_OrgDb(orgdb)
+  }
+  x <- unique(x)
+  found <- x %in% names(semdata@IC)
+  hasAncestor <- !is.na(sapply(x, function(x) tryCatch(GOSemSim:::getAncestors(ont)[x], 
+                                                       error = function(e) NA)))
+  if (all(!found)) {
+    warning("No terms were found in orgdb for ", ont, "\nCheck that the organism and ontology match the ones provided by orgdb")
+    return(NA)
+  }
+  else if (!all(found)) {
+    warning("Removed ", length(x) - sum(found), " terms that were not found in orgdb for ", 
+            ont)
+  }
+  x <- x[found & hasAncestor]
+  m <- matrix(GOSemSim::goSim(x, x, semData = semdata, measure = method), 
+              ncol = length(x), dimnames = list(x, x))
+  out <- apply(m, 2, function(x) all(is.na(x)))
+  m[!out, !out]
+}
+
+
+
+
+```
+
+
+
+# EOF
+```{r}
+sessionInfo()
+
+```

@@ -1,0 +1,1749 @@
+---
+title: "PRM analysis"
+author: ""
+date: "2023-03-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+# pacman::p_unload(pacman::p_loaded(), character.only = T)
+# rm(list = ls())
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(writexl)
+library(RColorBrewer)
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/')
+
+```
+
+
+# 0. function
+```{r}
+# source("//172.16.13.114/share/members/yuel/1project/1ref/figure/F2A/R/20220826ulhen_class.R")
+source("//172.16.13.136/share/members/yuel/2022/codes/20230207_ulhen_class.R")
+# source("//172.16.13.114/share/members/yuel/1project/QC.R")
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+source('//172.16.13.136/share/members/jiangwenhao/TPHP/my_fun.R')
+
+# crawl protein name from uniprot.org -------------------------------------
+my_uniprot2prot <- function(vec_uni){
+  vec_prot <- lapply(vec_uni, function(uniprotid){
+    # my_html <- rvest::read_html(stringr::str_glue('https://www.uniprot.org/uniprotkb/{uniprotid}/entry'))
+    my_html <- rvest::read_html(stringr::str_glue('https://rest.uniprot.org/genecentric/{uniprotid}')) # 2022-08-08 update; get json
+    my_json <- my_html %>%
+      rvest::html_text() %>%
+      jsonlite::fromJSON()
+    
+    prot <- my_json$canonicalProtein$proteinName
+    return(prot)
+  }) %>% unlist
+  return(stringr::str_c(vec_uni, vec_prot, sep = '_'))
+}
+
+
+# # scatter plot of protein abundance ---------------------------------------
+# my_plot_N_CA <- function(df){
+#   df %<>%
+#     add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+#     dplyr::mutate(cancer_type = factor(cancer_type, levels = c('N', 'Adj', 'C'))) %>%
+#     arrange(organ, cancer_type) %>%
+#     dplyr::mutate(cancer_type = as.character(cancer_type))
+# 
+#   #remove organ with all subtypes >= 90% NA ratio
+#   na_ratio <- function(x) sum(is.na(x)) / length(x)
+#   organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+#     summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+#     ungroup() %>%
+#     filter(na_ratio < 0.9) %>%
+#     pull(organ) %>%
+#     unique()
+# 
+#   df %<>% filter(organ %in% organ_selected)
+# 
+#   rlt <- list()
+#   #df[is.na(df)] <- 6.759341
+#   df_fillrate <- df
+#   my_uni <- colnames(df)[ncol(df)]
+#   my_title <- my_uniprot2prot(my_uni)
+#   colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+# 
+# 
+#   df <- na.omit(df)
+#   df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+# 
+#   # color setting
+#   df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+#   # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+#   pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+#   names(pseudo_ht_color) <- c('C', 'Adj', 'N')
+#   my_fills <- pseudo_ht_color[df$cancer_type]
+#   names(my_fills) <- df$cancer_type
+# 
+#   # text plotting
+#   my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+#   my_vlines <- 1:length(unique(df$organ))
+#   x <- c()
+#   for(i in 1:length(unique(df$organ))){
+#     df_tmp <- df[df$organ == unique(df$organ)[i],]
+#     x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+#     x <- append(x, x_tmp)
+#   }
+#   df$x <- x
+# 
+#   # barplot preparation
+#   df_bar <- lapply(unique(df_fillrate$organ), function(e){
+#     df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+#     df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+#       vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+#       return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+#     }) %>% as.data.frame(stringsAsFactor = F)
+#     colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+#     rownames(df_ttmp) <- e
+#     return(df_ttmp)
+#   }) %>% do.call(plyr::rbind.fill, .)
+#   df_bar$organ <- unique(df_fillrate$organ)
+#   df_bar %<>% reshape2::melt()
+#   colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+#   df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj', 'N'), ordered = T)
+#   rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+#   df_bar %<>% na.omit
+#   df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+#   pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/4) %>% .[. %% 1 != 0]
+#   names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 3)) %>% unlist, c('N', 'Adj', 'C'), sep = '_')
+# 
+#   df_bar$x <- pseudo_ht_bar[df_bar$label]
+#   df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+#   nmax <- max(df$intensity); nmin <- min(df$intensity)
+#   #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+#   df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+#   # double coordinates
+#   fillingvalue_x <- max(df$x) + 0.5
+#   fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+#   fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+#   fillingtitle <- 'Non-missing rate'
+#   fillingtitle_pos <- mean(c(nmin, nmax))
+#   #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+# 
+#   # figure
+#   tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+#   p <- ggplot()+
+#     geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.25)+
+#     geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.25)+# block non-missing rate lower than 0
+#     geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+#     geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+#     #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+#     #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+#     annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+#     annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+#     labs(
+#       y = 'log10 Intensity', title = my_title
+#     )+
+#     geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+#     coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+#     scale_x_continuous(expand = c(0, 0))+
+#     theme(panel.grid = element_blank(),
+#           panel.grid.major = element_blank(),
+#           panel.grid.minor = element_blank(),
+#           panel.background = element_blank(),
+#           axis.text = element_text(size = 12,color = 'black'),
+#           axis.line = element_line(color = 'black'),
+#           axis.line.x = element_blank(),
+#           plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+#     )+
+#     theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+#           legend.title = element_text(size = 15, color = 'black'))+
+#     theme(axis.title.x = element_blank(),
+#           #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+#           axis.text.x = element_blank(),
+#           axis.ticks.x = element_blank()
+#     )+
+#     theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+#           axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+#           axis.ticks.y = element_blank()
+#     )
+#   rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+#   return(rlt)
+# }
+
+# scatter plot of protein abundance ---------------------------------------
+my_plot_CA <- function(df, organ, refer = 'local', anno_txt = NULL){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio <= 0.5) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  if(refer == 'uniprot'){
+    my_title <- my_uniprot2prot(my_uni)
+  } else if(refer == 'local'){
+    my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+  }
+  my_title <- str_c(my_title, organ, sep = '_')
+  
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A')
+  names(pseudo_ht_color) <- c('C', 'Adj')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 1/3) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 2)) %>% unlist, c('Adj', 'C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- '1-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  if(is.null(anno_txt)){
+    tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.05, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  } else{
+    tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.05, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type and log2FC, pAdj
+    tmp %<>% str_replace(organ, str_glue("{organ}\n{anno_txt}"))
+  }
+  
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 0.33)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 0.33)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.05))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+my_plot_C <- function(df, organ, refer = 'local'){
+  df %<>%
+    add_column(label = stringr::str_c(df$organ, ' (', df$cancer_type, ')'), .before = 1) %>%
+    dplyr::mutate(cancer_type = factor(cancer_type, levels = c('Adj', 'C'))) %>%
+    arrange(organ, cancer_type) %>%
+    dplyr::mutate(cancer_type = as.character(cancer_type))
+  
+  #remove organ with all subtypes >= 90% NA ratio
+  na_ratio <- function(x) sum(is.na(x)) / length(x)
+  organ_selected <- df %>% dplyr::group_by(organ, cancer_type) %>%
+    summarise_at(vars(2), list(na_ratio = 'na_ratio')) %>%
+    ungroup() %>%
+    filter(na_ratio <= 0.5) %>%
+    pull(organ) %>%
+    unique()
+  
+  df %<>% filter(organ %in% organ_selected)
+  
+  rlt <- list()
+  #df[is.na(df)] <- 6.759341
+  df_fillrate <- df
+  my_uni <- colnames(df)[ncol(df)]
+  my_title <- my_uniprot2prot(my_uni)
+  if(refer == 'uniprot'){
+    my_title <- my_uniprot2prot(my_uni)
+  } else if(refer == 'local'){
+    my_title <- clusterProfiler::bitr(my_uni, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite(label) %>% pull()
+  }
+  my_title <- str_c(my_title, organ, sep = '_')
+  
+  colnames(df_fillrate)[ncol(df_fillrate)] <- colnames(df)[ncol(df)] <- c('intensity')
+  
+  
+  df <- na.omit(df)
+  df_fillrate <- df_fillrate[df_fillrate$organ %in% unique(df$organ), c(2, 3, 4)]
+  
+  # color setting
+  df$intensity <- log10(2 ^ df$intensity) # log2 -> log10
+  # pseudo_ht_color <- c('#F01025', '#EAD41A', '#1E72BA')
+  pseudo_ht_color <- c('#F01025', '#EAD41A')
+  names(pseudo_ht_color) <- c('C', 'Adj')
+  my_fills <- pseudo_ht_color[df$cancer_type]
+  names(my_fills) <- df$cancer_type
+  
+  # text plotting
+  my_texts_pos <- 1:length(unique(df$organ)) - 0.5
+  my_vlines <- 1:length(unique(df$organ))
+  x <- c()
+  for(i in 1:length(unique(df$organ))){
+    df_tmp <- df[df$organ == unique(df$organ)[i],]
+    x_tmp <- seq(from = i-1, to = i, length.out = nrow(df_tmp)+2)[2:(nrow(df_tmp)+1)]
+    x <- append(x, x_tmp)
+  }
+  df$x <- x
+  
+  # barplot preparation
+  df_bar <- lapply(unique(df_fillrate$organ), function(e){
+    df_tmp <- df_fillrate[df_fillrate$organ == e, c('cancer_type', 'intensity')]
+    df_ttmp <- lapply(unique(df_tmp$cancer_type), function(ee){
+      vec_ttmp <- df_tmp$intensity[df_tmp$cancer_type == ee]
+      return(sum(!is.na(vec_ttmp)) / length(vec_ttmp))
+    }) %>% as.data.frame(stringsAsFactor = F)
+    colnames(df_ttmp) <- unique(df_tmp$cancer_type)
+    rownames(df_ttmp) <- e
+    return(df_ttmp)
+  }) %>% do.call(plyr::rbind.fill, .)
+  df_bar$organ <- unique(df_fillrate$organ)
+  df_bar %<>% reshape2::melt()
+  colnames(df_bar)[2:3] <- c('cancer_type', 'fillingvalue')
+  df_bar$cancer_type <- factor(df_bar$cancer_type, levels = c('C', 'Adj'), ordered = T)
+  rlt$table <- df_bar %<>% dplyr::arrange(organ, cancer_type)
+  df_bar %<>% na.omit
+  df_bar$label <- stringr::str_c(df_bar$organ, df_bar$cancer_type, sep = '_')
+  pseudo_ht_bar <- seq(from = 0, to = length(unique(df_bar$organ)), by = 0.5) %>% .[. %% 1 != 0]
+  names(pseudo_ht_bar) <- stringr::str_c(lapply(unique(df_bar$organ), function(e) rep(e, 1)) %>% unlist, c('C'), sep = '_')
+  
+  df_bar$x <- pseudo_ht_bar[df_bar$label]
+  df_bar <- df_bar[df_bar$fillingvalue != 0, ]
+  nmax <- max(df$intensity); nmin <- min(df$intensity)
+  #df_bar$fillingvalue_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[1:(length(.) - 1)]
+  df_bar$fillingvalue_lt <- df_bar$fillingvalue * (nmax - nmin) + nmin
+  # double coordinates
+  fillingvalue_x <- max(df$x) + 0.5
+  fillingvalue_scale <- seq(nmin, nmax, length.out = 6)
+  fillingvalue_str <- stringr::str_c(seq(0, 100, length.out = 6), '%', sep = '')
+  fillingtitle <- '1-missing rate'
+  fillingtitle_pos <- mean(c(nmin, nmax))
+  #hline0.5_lt <- my_linear_trans(c(df_bar$fillingvalue, 0.5), nmax, nmin) %>% .[length(.)]
+  
+  # figure
+  tmp <- stringr::str_c("+annotate('text', x = ", my_texts_pos, ", y = max(df$intensity) * 1.02, label = '", unique(sort(df$organ)), "', color = '#000000', size = 4)", collapse = ' ') # labels of sample type
+  p <- ggplot()+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = fillingvalue_lt, fill = cancer_type), fill = pseudo_ht_color[df_bar$cancer_type], stat = 'identity', alpha = 0.2, width = 1)+
+    geom_bar(data = df_bar, mapping = aes(x = x, y = nmin, fill = cancer_type), fill = '#FFFFFF', stat = 'identity', width = 1)+# block non-missing rate lower than 0
+    geom_point(data = df, mapping = aes(x = x, y = intensity), fill = my_fills, color = '#000000', shape = 21, size = 5)+
+    geom_vline(xintercept = my_vlines, color = '#000000', linetype = 'dashed', size = 0.5)+
+    #geom_hline(yintercept = hline0.5_lt, color = pseudo_ht_color['C'], linetype = 'dashed', size = 0.5, alpha = 0.5)+
+    #annotate('text', x = 0.2, y = hline0.5_lt * 1.01, label = 'Missing value < 50%', color = pseudo_ht_color['C'], size = 4, alpha = 0.5, hjust = 0)+
+    annotate('text', x = fillingvalue_x * 1.06, y = fillingtitle_pos, label = fillingtitle, size = 4.5, hjust = 0.5, vjust = 0.5, angle = 270)+# mock y-axis title
+    annotate('text', x = fillingvalue_x * 1.01, y = fillingvalue_scale, label = fillingvalue_str, size = 4, hjust = 0, vjust = 0.5)+# mock y-axis text
+    labs(
+      y = 'log10 Intensity', title = my_title
+    )+
+    geom_vline(xintercept = c(placeholder_x = fillingvalue_x * 1.1), color = '#FFFFFF')+# placeholder for x-axis
+    coord_cartesian(ylim = c(nmin, nmax * 1.02))+
+    scale_x_continuous(expand = c(0, 0))+
+    theme(panel.grid = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          panel.background = element_blank(),
+          axis.text = element_text(size = 12,color = 'black'),
+          axis.line = element_line(color = 'black'),
+          axis.line.x = element_blank(),
+          plot.subtitle = element_text(size = 30, hjust = 0, color = 'black')
+    )+
+    theme(legend.text = element_text(size = 12, color = 'black'), legend.position = 'top',
+          legend.title = element_text(size = 15, color = 'black'))+
+    theme(axis.title.x = element_blank(),
+          #axis.text.x = element_text(size = 12, vjust = 0.5 ,color = 'black', angle = 90),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()
+    )+
+    theme(axis.title.y = element_text(size = 12, hjust = 0.5, color = 'black', angle = 90),
+          axis.text.y = element_text(size = 10,color = 'black', angle = 0),
+          axis.ticks.y = element_blank()
+    )
+  rlt$p <- eval(parse(text = stringr::str_c('p', tmp)))
+  return(rlt)
+}
+
+```
+
+
+# 1. preparation
+## sample info
+```{r}
+# new info v5
+df_infov5 <- rio::import('//172.16.13.114/share/members/yuel/1project/0_TPHP/1_data/0_2_sample_info/20230222TPHP_1781file_info_edited_v5.xlsx')
+df_infov5[grep("SCA_149",df_infov5$DIA_ID), 'patient_ID']<-"770666-2"
+df_infov5[grep("SCA_150",df_infov5$DIA_ID), 'patient_ID']<-"770666-2"
+df_infov5[grep("SCA_1$",df_infov5$DIA_ID), 'patient_ID']<-"811335-2"
+df_infov5[grep("SCA_2$",df_infov5$DIA_ID), 'patient_ID']<-"811335-2"
+
+# df_infov5 %>% filter(DIA_ID == 'DIA_224')
+# df_infov5 %>% filter(tissue_name == 'upper lobe of left lung')
+df_infov5[df_infov5$FileName == 'M20200719yuel_TPHP_DIA_224_rep_Slot2-14_1_1092.d', 'anatomical_location'] <- 'upper lobe of left lung'
+
+# info
+info <- read.csv("Z:/members/yuel/1project/1ref/data/TPHP_PRM/PRM_quantification/data analysis/20220707TPHP_PRM_peptide_matrix_file-filter_info.csv")
+str_extract(info$ID, "[A-Z_]+") %>% unique() # "CA"   "NOR"  "SCA_" "SCA"  "CA_"  "NOR_"
+str_extract(df_infov5$DIA_ID, "[A-Z_]+") %>% unique() # "CA_DIA_" "DIA_"    "SCA_"    "SN_"     NA
+info$ID %<>%
+  str_replace("^CA_", "CA") %>%
+  str_replace("^SCA_", "SCA") %>%
+  str_replace("^NOR_", "NOR") %>%
+  str_replace("^NOR", "DIA_") %>%
+  str_replace("^SCA", "SCA_") %>%
+  str_replace("^CA", "CA_DIA_")
+info$ID %<>% sapply(function(s) {
+  s1 <- str_extract(s, "[A-Z_]+")
+  s2 <- str_extract(s, "\\d+$") %>%
+    as.numeric() %>%
+    as.character()
+  str_c(s1, s2)
+}) # change number
+info %<>% dplyr::rename(DIA_ID = ID)
+
+
+setdiff(info$DIA_ID, df_infov5$DIA_ID)
+# [1] "CA_DIA_120" "DIA_74"     "DIA_98"     "SCA_395"    "SCA_396"    "SCA_397"   
+# [7] "SCA_398" 
+
+
+df_infov5 %<>% select(-FileName, -(Precursors:Proteins), -Rep, -Rep_type) %>% # FileName level
+  distinct() %>%
+  left_join(info, ., by = 'DIA_ID')
+
+info <- df_infov5 %>% select(DIA_ID, patient_ID, sample_type, tissue_name, anatomical_classification) %>% distinct() # DIA_ID level
+
+rio::export(df_infov5, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PHU_PRM_infov5_1129files_20230313.xlsx')
+```
+
+
+## peptide matrix to protein
+```{r}
+# peptide matrix
+pm <- read.csv("Z:/members/yuel/1project/1ref/data/TPHP_PRM/PRM_quantification/data analysis/20220707TPHP_PRM_peptide_matrix_file-filtered_qu.csv", row.names = "X")
+prm_pep <- read.csv('Z:/members/yuel/1project/1ref/data/TPHP_PRM/PRM_quantification/data analysis/peptide_quantification_merged_20220701.csv', check.names = F)
+df_p2p <- prm_pep %>% dplyr::select(Peptide, Protein) %>% filter(Protein != 'cirt') %>%
+  mutate(UniprotID = str_split(Protein, '\\|') %>% sapply(function(s) s[2])) %>%
+  distinct()
+
+pep_data <- pm %>% rownames_to_column('Peptide') %>%
+  left_join(df_p2p %>% dplyr::select(-Protein), ., by = 'Peptide')
+df_prot <- easyp2p(pep_data)
+df_prot[, -1] <- 2 ^ df_prot[, -1]
+
+rio::export(pep_data, '20230313TPHP_PRM_pep_matrix_57.csv')
+rio::export(df_prot, '20230313TPHP_PRM_prot_matrix_48.csv')
+
+```
+
+
+## where are the targets from
+```{r}
+prm_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230313TPHP_PRM_prot_matrix_48.csv') %>% pull(prot)
+
+dia_spe_dep <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318yuel_TPHP_CA_targetlist_3.csv') %>% unlist() %>% .[!is.na(.)]
+
+dia_C_tisen <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_Carcinoma_tissue_enriched1493_group_enriched1586_2984prot.csv') %>% filter(Classification == 'tissue enriched') %>% pull(protein) %>% unique()
+
+dia_C_grpen <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_Carcinoma_tissue_enriched1493_group_enriched1586_2984prot.csv') %>% filter(Classification == 'group enriched') %>% pull(protein) %>% unique()
+
+
+
+
+setdiff(prm_prot, Reduce(union, list(dia_spe_dep, dia_C_tisen, dia_C_grpen)))
+# [1] "O75554" "O75683" "P02768" "P22528" "P56749" "Q01524" "Q16674" "Q92521" "Q969H4"
+# [10] "Q96GN5" "Q9BYV9" "Q9UIK4" "Q9Y4X0"
+
+setdiff(prm_prot, Reduce(union, list(dia_C_tisen, dia_C_grpen)))
+#  [1] "O75554" "O75683" "P02768" "P22528" "P56749" "Q01524" "Q16674" "Q92521" "Q969H4"
+# [10] "Q96GN5" "Q9BYV9" "Q9UIK4" "Q9Y4X0"
+
+
+
+# check filtered CA proteins by 50% NA for DEA
+df1 <- read.csv('//172.16.13.136/share/members/yuel/2022/tables/20230318_PUH_submatrix_combine_5_missing.csv', check.names = F) # CA combine 50 missing submatrice
+dia_CA_DEA_prot <- colnames(df1)[-(1:6)]
+setdiff(prm_prot, dia_CA_DEA_prot)
+# "P22528" "Q01524" "Q16674" "Q92521" "Q969H4" "Q96GN5" "Q9BYV9" "Q9UIK4" "Q9Y4X0"
+
+# check all CA proteins
+df <- readxl::read_excel("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230116TPHP_CA_remove_allNA_1099_13392.xlsx", col_types = c(rep('guess', 5), rep('numeric', 13392)), na = '')
+dia_CA_prot <- colnames(df)[-(1:6)]
+setdiff(prm_prot, dia_CA_prot)
+character(0)
+
+# check all paired proteins for DEA
+df_pair <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_CA_ADJ_pairs_for_DPA_998_13390prot.xlsx')
+
+
+# # check all proteins
+# df_full <- read.csv('//172.16.13.114/share/members/yuel/1project/0_TPHP/1_data/0_1_protein_matrix/TPHP_CA-SCA-pool_pm_qu_log2_limma_20220705.csv', check.names = F)
+# colnames(df_full)[1] <- 'prot'
+# dia_CAN_prot <- df_full$prot
+# setdiff(prm_prot, dia_CAN_prot)
+# # character(0)
+# 
+# # df_full %>% filter(prot %in% setdiff(prm_prot, dia_CA_prot))
+```
+
+
+# 2. read files
+```{r}
+df_infov5 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PHU_PRM_infov5_1129files_20230313.xlsx')
+df_pep <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230313TPHP_PRM_pep_matrix_57.csv')
+df_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230313TPHP_PRM_prot_matrix_48.csv')
+
+
+# merge info-matrix
+df <- df_prot %>% column_to_rownames('prot') %>% t() %>% log2() %>% as.data.frame() %>% rownames_to_column('FileName') %>%
+  inner_join(df_infov5, .)
+
+colnames(df) %>% head(12)
+colnames(df) %>% tail()
+ncol(df) - 11 # 48 (48 targeted proteins)
+dim(df) # 1129   59
+df %>% rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_prot_info_20230313.xlsx')
+
+```
+
+
+# 3. DEA
+## aggregate files to DIA_ID level
+```{r}
+last_info_col <- 11 # the last number of information column
+pm <- readxl::read_excel("//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_prot_info_20230313.xlsx",
+                         col_types = c(rep('guess', last_info_col), rep('numeric', 48)), na = '')
+X <- as.matrix(pm[,-c(1:last_info_col)])
+sum(is.na(X)) / length(X) # 0.8809418
+
+#CA/ADJ differentiated proteins in each organ
+#imputation of MAs and replicates
+pm3<-apply(pm[,-c(1:last_info_col)],c(1,2),as.numeric)
+min(pm3,na.rm = T)#18.2398
+na.sum<-apply(pm3, 2, function(v) is.na(v)/length(v))
+sum(na.sum==1) # 0
+
+
+set.seed(2022)
+na_pools <- min(pm3,na.rm = T)+log2(0.5)+log2(rnorm(10000000,mean=1,sd=0.001))
+# na_pools <- min(pm3,na.rm = T)+log2(0.5)+log2(rnorm(10000000,mean=1,sd=0.1)) %>% round(2)
+
+
+pm4<-aggregate(2^pm3,by=list(pm$DIA_ID),median,na.rm=T)
+pm4<-pm4[!is.na(pm4$Group.1),]
+
+#remove unpaired ca/adj samples
+tab<-as.data.frame(cbind(#data.frame(DIA_ID=pm4$Group.1),
+                         pm[match(pm4$Group.1,pm$DIA_ID),2:last_info_col])) %>%
+  select(DIA_ID, everything())
+si_pm_ca<-as.data.frame(cbind(tab,log2(pm4[,-1])))              
+si_pm_ca2<-si_pm_ca[which(si_pm_ca$patient_ID %in% na.omit(unique(si_pm_ca$patient_ID[duplicated(si_pm_ca$patient_ID)]))),]
+tmp<-aggregate(si_pm_ca2$DIA_ID,by=list(si_pm_ca2$patient_ID),length)
+# sis2<-distinct(sis)
+si_pm_ca3<-si_pm_ca2[!is.na(si_pm_ca2$anatomical_classification),]#remove back
+si_pm_ca3 %<>% filter(sample_type %in% c('carcinoma', 'adjacent')) # select CA and Adj
+dim(si_pm_ca3) # 928  58
+
+
+label_vec <- unique(si_pm_ca2$sample_type)
+df<-si_pm_ca3
+
+#differentiated analysis
+# select paired rows, then columns
+df_pair <- df[df$sample_type %in% label_vec, ]
+df_pair <- df_pair[order(df_pair$patient_ID), ]
+df_pair %>% count(patient_ID) %>% filter(n %% 2 == 1) # 0 row
+
+# remove gastric poorly cohesive and mixed carcinoma
+df_pair %<>%
+  filter(!(tissue_name %in% c('gastric poorly cohesive carcinoma', 'gastric mixed carcinoma')))
+
+dim(df_pair) # 914  58
+df_pair %>% rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_prot_info_914pair_48prot.xlsx')
+
+```
+
+
+
+## CA/ADJ DEPs in each kind of cancer
+```{r}
+# ------ read data ---------
+df_pair <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_prot_info_914pair_48prot.xlsx', col_types = c(rep('guess', 10), rep('numeric', 48)), na = '') %>%
+  as.data.frame()
+
+# remain:  "DIA_ID"      "cancer_type" "tissue_name" "organ"       "patient_ID" 
+df_pair %<>% select(DIA_ID, sample_type, tissue_name, anatomical_classification, patient_ID, 11:ncol(df_pair)) %>%
+  rename(cancer_type = sample_type, organ = anatomical_classification)
+
+
+# DEA
+label_vec <- unique(df_pair$cancer_type)
+types_vec <- unique(df_pair$organ)
+type_col <- 'organ'
+pdfPath <- '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_TPHP_PRM_DEA_filter50NAByOrgan.pdf'
+main_volcano_title <- 'CA/ADJ volcano plot'
+main_tsv_name <- '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_PRM_CA_ADJ_volcanoplot_filter50NAByOrgan_2-fc_0.05p_'
+dirPath <- stringr::str_c(stringr::str_split(pdfPath, '/')[[1]][-length(stringr::str_split(pdfPath, '/')[[1]])], collapse = '/')
+pairedT=T
+cutoff_fc = 2.0
+cuttoff_p = 0.05
+
+if(!dir.exists(dirPath)) { # if not exsits, create the result folder
+  dir.create(dirPath, recursive = T)
+}
+fcs <- list(); pValues_t <- list(); pAdjs_t <- list(); pValues_wilcox <- list(); pAdjs_wilcox <- list(); names_ls <- list()
+tmp_ls <- list() # to save all `df_tmp` tables
+# Step1: calculate fold change and p value
+for(i in 1:length(types_vec)){
+  # select one library type data per loop
+  #df_tmp <- df_pair[df_pair[, type_col] == types_vec[i], ]
+  # i=1
+  df_tmp <- df_pair[sapply(df_pair[, type_col], function(e){grepl(e, types_vec[i])}), ]
+  pm_tmp <- df_tmp %>% select(-(1:5))
+  pm_tmp <- pm_tmp[, apply(pm_tmp, 2, function(x) sum(is.na(x)) / length(x)) <= 0.5, drop = F] # remove NA > 50%
+  tmp_ls[[i]] <- cbind(df_tmp[, (1:5)], pm_tmp) # save unfilled tables
+  
+  pm_tmp[is.na(pm_tmp)] <- sample(na_pools, size = sum(is.na(unlist(pm_tmp))))
+  df_tmp <- cbind(df_tmp[, (1:5)], pm_tmp)
+  
+  tmp <- table(df_tmp$cancer_type)
+  # continue to the next loop if the runs of any label less than two or the label types_vec less than two
+  if( any(tmp < 2) | length(tmp) %% 2 | length(tmp) < 2 ){ print(str_c('Skipped: ', i, ' -- ', types_vec[i])); next; }
+  # select rows and remove columns with all values being NA
+  df_tmp <- df_tmp[, !(colnames(df_tmp) %in% c(type_col, 'DDA_lib_type'))]
+  df_tmp <- df_tmp[, apply(df_tmp, 2, function(v){ sum(is.na(v)) < nrow(df_tmp) })]
+  
+  # prepare plotting information
+  cancer_type <- df_tmp$cancer_type
+  lbls <- label_vec
+  
+  mat <- apply(df_tmp[, !(colnames(df_tmp)) %in% colnames(df_pair)[1:5], drop = F], c(1, 2), as.numeric)
+  dim(mat)
+  
+  ## assign NA to log2(min)
+  #min_log2 <- log2(min(2 ^ mat, na.rm = T) * 0.8)
+  #mat[is.na(mat)] <- min_log2
+  
+  fc <- apply(2 ^ mat, 2, function(x){
+    log2(mean(na.omit(x[cancer_type==lbls[1]])) / mean(na.omit(x[cancer_type == lbls[2]])))
+  })
+  pValue_t <- apply(mat, 2, function(v) {
+    p1 <- try(t.test(v[cancer_type == lbls[1]], v[cancer_type == lbls[2]], paired = T, var.equal = F)$p.value)
+    return(p1)
+  })
+  pValue_wilcox <- apply(2 ^ mat, 2, function(v) {
+    p1 <- try(wilcox.test(v[cancer_type == lbls[1]], v[cancer_type == lbls[2]], paired = T, var.equal = F)$p.value)
+    return(p1)
+  })
+  pAdj_t <- p.adjust(pValue_t,method="BH")
+  pAdj_wilcox <- p.adjust(pValue_wilcox,method="BH")
+  fcs[[i]] <- fc; pValues_t[[i]] <- pValue_t; pAdjs_t[[i]] <- pAdj_t
+  pValues_wilcox[[i]] <- pValue_wilcox; pAdjs_wilcox[[i]] <- pAdj_wilcox
+  names_ls[[i]] <- colnames(df_tmp[, !(colnames(df_tmp)  %in% colnames(df_pair)[1:5]), drop = F])
+}
+
+dftmp_comb <- reduce(tmp_ls, full_join)
+# rio::export(dftmp_comb, '20230224_PUH_submatrix_combine_5_missing_log2.csv')
+dftmp_comb[, -(1:5)] <- 2 ^ dftmp_comb[, -(1:5)]
+
+# which column with 100% NA
+which(apply(dftmp_comb, 2, function(y) sum(is.na(y)) / length(y)) == 1) # named integer(0)
+rio::export(dftmp_comb, '20230318_PUH_PRM_submatrix_combine_5_missing.csv')
+
+
+df_diff_all <- lapply(seq_along(types_vec), function(i){
+  data.frame(
+    protein = names_ls[[i]],
+    log2FC = fcs[[i]],
+    p_t = pValues_t[[i]],
+    pAdj_t = pAdjs_t[[i]],
+    p_wilcox = pValues_wilcox[[i]],
+    pAdj_wilcox = pAdjs_wilcox[[i]]
+  )
+}) %>%
+  setNames(types_vec) %>%
+  plyr::ldply(.id = 'organ') %>%
+  mutate_at('organ', as.character) %>%
+  arrange(organ, protein, pAdj_t)
+# rio::export(df_diff_all, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20221226_TPHP_dysregulated_proteins_without_filtering.xlsx')
+rio::export(df_diff_all, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_TPHP_PRM_dysregulated_filter50NAByOrgan.xlsx')
+
+
+
+df_diff_all %>% filter(protein == 'P78367')
+df_diff_all %>% filter(protein == 'Q8WZ60')
+df_diff_all %>% filter(protein == 'P11387')
+df_diff_all %>% filter(protein == 'Q96CG3')
+df_diff_all %>% filter(protein == 'Q15910') # 
+df_diff_all %>% filter(protein == 'P56282')
+
+df_diff_all %>% filter(p_t != pAdj_t)
+df_diff_all %>% filter(p_t != pAdj_t, pAdj_t >= 0.05, p_t < 0.05)
+#             organ protein    log2FC        p_t     pAdj_t   p_wilcox pAdj_wilcox
+# 1 large intestine  Q9Y692 0.4717366 0.03449084 0.10347253 0.03851076  0.11553229
+# 2           liver  O75554 1.3195152 0.03446724 0.10340173 0.04125977  0.12377930
+# 3        pancreas  Q92521 1.0021524 0.01457417 0.07287086 0.01303400  0.06517002
+# 4         stomach  O15194 0.8857993 0.03446914 0.06893828 0.05082763  0.10165527
+# 5          thymus  Q92521 2.4538982 0.03512326 0.14049304 0.03906250  0.15625000
+# 6         thyroid  O15194 1.1556196 0.04856662 0.13761386 0.01562500  0.07812500
+
+
+
+pValues <- pAdjs_t # use adjusted t-test (paired, two-tailed)
+# pValues <- pValues_t # use t-test (paired, two-tailed)
+
+# Step2: plotting figures
+pdf(pdfPath, width = 18, height = 10)###################
+par(mfrow=c(3, 5))##################
+for(i in 1:length(types_vec)){
+  fc <- fcs[[i]]; pValue <- pValues[[i]]
+  if(length(fc) == 0 | length(pValue) == 0){
+    next
+  }
+  # plotting
+  strTitle <- paste0(main_volcano_title, ': ', types_vec[i])
+  plot(fc, -log10(pValue), col = '#00000033', pch = 19,xlab = 'log2(FC)', ylab = '-log10(p-value)', main = strTitle)
+  abline(h = 1.3, v = c(-log2(cutoff_fc),log2(cutoff_fc)), lty = 2, lwd = 1)
+  up  <- fc >= log2(cutoff_fc) & pValue <= cuttoff_p
+  points(fc[up], -log10(pValue[up]), col = 1,bg = brewer.pal(9,"YlOrRd")[6], pch = 21, cex = 2)
+  down <- fc <= -log2(cutoff_fc) & pValue <= cuttoff_p
+  points(fc[down], -log10(pValue[down]), col = 1,bg = brewer.pal(11,"RdBu")[9], pch = 21, cex = 2)
+}
+dev.off()
+
+# Step3: write tables
+for(i in 1:length(types_vec)){
+  fc <- fcs[[i]]; pValue <- pValues[[i]]
+  if(length(fc) == 0 | length(pValue) == 0){
+    next
+  }
+  
+  outFile <- paste0(main_tsv_name, types_vec[i], '.xlsx')
+  
+  up  <- fc >= log2(cutoff_fc) & pValue <= cuttoff_p
+  down <- fc <= -log2(cutoff_fc) & pValue <= cuttoff_p
+  name <- list(up = data.frame(prot = names_ls[[i]][up],fc = fc[up], p_value = pValue[up],
+                               type = rep("Upregulation", sum(up)),stringsAsFactors=F),
+               down = data.frame(prot = names_ls[[i]][down],fc = fc[down], p_value = pValue[down],
+                                 type = rep("Downregulation",sum(down)),stringsAsFactors=F),
+               all=data.frame(prot=names(fc),fC=fc,p_value=pValue))
+  
+  
+  if( !is.null(outFile) ){
+    writexl::write_xlsx(name,outFile)
+  }
+}
+
+
+
+
+# Step4: combine DEA tables
+# search DEP tables
+path <- '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM'
+fileName <- list.files(path, pattern = '^20230318_PRM_CA_ADJ_volcanoplot.*\\.xlsx$')
+length(fileName) # 23
+
+# get organ names
+organ <- str_extract(fileName, '05p_.+\\.xlsx') %>%
+  str_replace('05p_', '') %>% str_replace('\\.xlsx', '')
+
+#get abbreviations
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+organ <- sapply(organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+
+# read all DEP
+data <- lapply(fileName, function(e) readxl::read_xlsx(str_c(path, e, sep = '/'), sheet = 1))
+names(data) <- organ
+up <- plyr::ldply(data, .id = 'organ') %>% dplyr::rename(log2FC = fc)
+
+data <- lapply(fileName, function(e) readxl::read_xlsx(str_c(path, e, sep = '/'), sheet = 2))
+names(data) <- organ
+down <- plyr::ldply(data, .id = 'organ') %>% dplyr::rename(log2FC = fc)
+
+dia <- rbind(up, down)
+all_pro<-reduce(dia$prot,union)
+
+list(all = dia,
+     up = up,
+     down = down
+     ) %>%
+  rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_TPHP_PRM_dysregulated_filter50NAByOrgan_DEP.xlsx')
+
+```
+
+
+## PRM DIA overlap
+```{r}
+# read prm data
+prm <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_TPHP_PRM_dysregulated_filter50NAByOrgan_DEP.xlsx', sheet = 'all')
+prm_specific_prot <- prm %>% count(prot) %>% filter(n == 1) %>% pull(prot)
+prm_specific_up <- prm %>% filter(prot %in% prm_specific_prot) %>% filter(type == 'Upregulation') %>% select(organ, prot)
+
+# read dia specific proteins
+dia_target <- read.csv('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318yuel_TPHP_CA_targetlist_3.csv', check.names = F)
+#get abbreviations
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+colnames(dia_target) <- sapply(colnames(dia_target), function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+dia_specific <- dia_target %>% pivot_longer(cols = everything(), names_to = 'organ', values_to = 'prot')
+
+prot_validated <- intersect(dia_specific$prot, prm_specific_up$prot)
+tbl1 <- prm_specific_up %>% filter(prot %in% prot_validated) %>% mutate(data = 'PRM')
+tbl2 <- dia_specific %>% filter(prot %in% prot_validated) %>% mutate(data = 'DIA')
+tbl <- rbind(tbl1, tbl2)
+tbl_validated <- tbl %>% select(organ, prot, data) %>%
+  pivot_wider(id_cols = c('organ', 'prot'), names_from = 'data', values_from = 'data')
+
+list(validate = tbl_validated,
+     prm = prm %>% filter(prot %in% tbl_validated$prot) %>% rename(pAdj = p_value),
+     dia = dia %>% filter(prot %in% tbl_validated$prot) %>% rename(pAdj = p_value)) %>%
+  rio::export('PUH_DIA_PRM_cancer_specific_overlap_20230318.xlsx')
+
+
+
+# match to DIA carcinoma enriched data
+setdiff(prm_specific_up$prot, dia_specific$prot) # "O15079" "Q92521" "Q15910" "Q96RG2"
+
+dia_en <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_Carcinoma_tissue_enriched1493_group_enriched1586_2984prot.csv')
+dia_en_prot <- dia_en %>% filter(Classification == 'tissue enriched') %>% pull(protein)
+intersect(setdiff(prm_specific_up$prot, dia_specific$prot), dia_en_prot) # "O15079"
+setdiff(setdiff(prm_specific_up$prot, dia_specific$prot), dia_en_prot) # "Q92521" "Q15910" "Q96RG2"
+
+
+```
+
+
+### ===scatter plot -- validated targets===
+```{r}
+info <- rio::import('PHU_PRM_infov5_1129files_20230313.xlsx')
+
+# heatmap preparation -----------------------------------------------------
+protinfo <- tbl_validated %>% select(organ, prot)
+protinfo$cancer_type <- 'carcinoma'
+protinfo %<>% arrange(organ, desc(cancer_type))
+
+
+df_prot <- rio::import('20230313TPHP_PRM_prot_matrix_48.csv')
+pm <- df_prot %>% column_to_rownames('prot')
+pm1 <- pm
+pm1[is.na(pm1)] <- min(pm1, na.rm = T) * 0.5
+
+df1 <- pm1 %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("FileName") %>%
+  full_join(info, ., by = "FileName")
+
+# change to DIA labels (cancer names)
+df1 %<>% filter(!is.na(df1$anatomical_location))
+df1[str_detect(df1$anatomical_location, 'large intestine'), 'anatomical_classification'] <- 'colon'
+df1[str_detect(df1$anatomical_location, 'rectum'), 'anatomical_classification'] <- 'rectum'
+df1[str_detect(df1$anatomical_location, 'cervix'), 'anatomical_classification'] <- 'cervix_uteri'
+
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>% # select classification
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # select carcinoma/adjacent
+  select(FileName, sample_type, anatomical_classification, 14:ncol(df1)) %>%
+  rename(cancer_type = sample_type, organ = anatomical_classification)
+df2$organ <- sapply(df2$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+# remove brain and skin
+protinfo %<>% filter(!(organ %in% c('CE', 'SKI')))
+df2 %<>% filter(!(organ %in% c('CE', 'SKI')))
+
+# add gene name
+require(org.Hs.eg.db)
+uni_entr <- clusterProfiler::bitr(protinfo$prot,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% setNames(c('UniprotID', 'target_genes'))
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+protinfo <- dplyr::full_join(protinfo, uni_entr, by = c('prot' = 'UniprotID'))
+protinfo %<>% rename(UniprotID = prot)
+
+
+# matrix
+df <- df2 %>%
+  dplyr::select(1:3, protinfo$UniprotID) %>%
+  arrange(organ, desc(cancer_type))
+df[, -(1:3)] %<>% log2
+df[df == min(df[, -(1:3)])] <- NA
+
+df_info <- df %>% dplyr::select(1:3)
+rownames(df_info) <- df_info$FileName
+# df <- df %>% dplyr::select(-(1:3))
+
+# missing ratio < 50%
+na_ratio <- c()
+for(i in 1:nrow(protinfo)){
+  this_prot <- protinfo$UniprotID[i]
+  this_organ <- protinfo$organ[i]
+  this_cancer <- protinfo$cancer_type[i]
+  
+  x <- df %>% filter(organ == this_organ, cancer_type == this_cancer) %>%
+    pull(all_of(this_prot))
+  na_ratio[i] <- sum(is.na(x)) / length(x)
+}
+protinfo %<>% filter(all_of(na_ratio) < 0.5)
+protinfo %<>% left_join(prm, by = c('organ', UniprotID = 'prot')) %>% rename(pAdj = p_value)
+df %<>% dplyr::select(1:3, all_of(protinfo$UniprotID))
+
+# remark
+df[df$cancer_type == 'carcinoma', 'cancer_type'] <- '1_carcinoma'
+df[df$cancer_type == 'adjacent', 'cancer_type'] <- '2_adjacent'
+
+
+
+
+# pacman::p_unload(pacman::p_loaded(), character.only = T)
+# library(magrittr)
+# library(tidyverse)
+
+# data prepare
+df_expr <- df %>%
+  select(-FileName) %>%
+  select(organ, cancer_type, everything())
+df_expr[df_expr$cancer_type == '1_carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == '2_adjacent', 'cancer_type'] <- 'Adj'
+
+plots <- list()
+for(i in 1:(ncol(df_expr)-2)){
+  anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)}, pAdj={signif(protinfo$pAdj[i], 3)}")
+  plots[[i]] <- df_expr %>%
+    select(1:2, i+2) %>%
+    my_plot_CA(organ = protinfo$organ[i], refer = 'local',
+               anno_txt = anno_txt)
+}
+
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+
+ggsave('TPHP_PRM_CA_specific_expr_50NA_20230515.pdf', p, width = 6, height = 6 * length(plots))
+
+unique(protinfo$UniprotID)  #"O15204" "Q02548" "Q7L513" "Q8TCG5" "Q9H0Q3"
+
+
+```
+
+### =====boxplot_old=====
+```{r}
+info <- rio::import('PHU_PRM_infov5_1129files_20230313.xlsx')
+
+# heatmap preparation -----------------------------------------------------
+protinfo <- tbl_validated %>% select(organ, prot)
+protinfo$cancer_type <- 'carcinoma'
+protinfo %<>% arrange(organ, desc(cancer_type))
+
+
+df_prot <- rio::import('20230313TPHP_PRM_prot_matrix_48.csv')
+pm <- df_prot %>% column_to_rownames('prot')
+pm1 <- pm
+pm1[is.na(pm1)] <- min(pm1, na.rm = T) * 0.5
+
+df1 <- pm1 %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("FileName") %>%
+  full_join(info, ., by = "FileName")
+
+df2 <- df1 %>%
+  filter(!is.na(anatomical_classification)) %>% # select classification
+  filter(sample_type %in% c('carcinoma', 'adjacent')) %>% # select carcinoma/adjacent
+  select(FileName, sample_type, anatomical_classification, 14:ncol(df1)) %>%
+  rename(cancer_type = sample_type, organ = anatomical_classification)
+df2$organ <- sapply(df2$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+# remove brain and skin
+protinfo %<>% filter(!(organ %in% c('CE', 'SKI')))
+df2 %<>% filter(!(organ %in% c('CE', 'SKI')))
+
+# add gene name
+require(org.Hs.eg.db)
+uni_entr <- clusterProfiler::bitr(protinfo$prot,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% setNames(c('UniprotID', 'target_genes'))
+pacman::p_unload(pacman::p_loaded(), character.only = T)
+library(magrittr)
+library(tidyverse)
+protinfo <- dplyr::full_join(protinfo, uni_entr, by = c('prot' = 'UniprotID'))
+protinfo %<>% rename(UniprotID = prot)
+
+
+# matrix
+df <- df2 %>%
+  dplyr::select(1:3, protinfo$UniprotID)# %>%
+  #arrange(organ, desc(cancer_type))
+df[, -(1:3)] %<>% log2
+df[df == min(df[, -(1:3)])] <- NA
+
+df_info <- df %>% dplyr::select(1:3)
+rownames(df_info) <- df_info$FileName
+# df <- df %>% dplyr::select(-(1:3))
+
+# missing ratio < 50%
+na_ratio <- c()
+for(i in 1:nrow(protinfo)){
+  this_prot <- protinfo$UniprotID[i]
+  this_organ <- protinfo$organ[i]
+  this_cancer <- protinfo$cancer_type[i]
+  
+  x <- df %>% filter(organ == this_organ, cancer_type == this_cancer) %>%
+    pull(all_of(this_prot))
+  na_ratio[i] <- sum(is.na(x)) / length(x)
+}
+protinfo %<>% filter(all_of(na_ratio) < 0.5)
+protinfo %<>% left_join(prm, by = c('organ', UniprotID = 'prot')) %>% rename(pAdj = p_value)
+df %<>% dplyr::select(1:3, all_of(protinfo$UniprotID))
+
+# remark
+df[df$cancer_type == 'carcinoma', 'cancer_type'] <- '1_carcinoma'
+df[df$cancer_type == 'adjacent', 'cancer_type'] <- '2_adjacent'
+
+# data prepare
+df_expr <- df %>%
+  select(-FileName) %>%
+  select(organ, cancer_type, everything())
+df_expr[df_expr$cancer_type == '1_carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == '2_adjacent', 'cancer_type'] <- 'Adj'
+
+
+
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+df_log10 <- df_expr %>% mutate_if(is.numeric, function(e) {log10(2 ^ e)})
+na_filling <- log10(min(df_prot[, -1],na.rm = T)) + log10(0.5)
+
+plots <- list()
+for(i in 1:nrow(protinfo)){
+  # anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)},\npAdj={signif(protinfo$pAdj[i], 3)}")
+  # anno_txt <- sprintf("%1.2f (%1.2e)", 2 ^ protinfo$log2FC[i], protinfo$pAdj[i])
+  anno_txt <- sprintf("%1.2e", protinfo$pAdj[i])
+  plots[[i]] <- df_log10 %>%
+    select(organ, cancer_type, patient_ID, all_of(protinfo$UniprotID[i])) %>%
+    my_plot_CA_boxviolin(organ = protinfo$organ[i], na_cutoff = 1, refer = 'local',
+                         anno_txt = anno_txt)
+}
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+
+# ggsave('TPHP_PRM_CA_specific_expr_50NA_boxplot_20230313.pdf', p, width = 6, height = 6 * length(plots))
+# ggsave('TPHP_PRM_CA_specific_expr_boxplot_20230315.pdf', p, width = 30, height = 3 * length(plots))
+# ggsave('TPHP_PRM_CA_specific_expr_boxviolin_20230317.pdf', p, width = 20, height = 2.6 * length(plots))
+ggsave('TPHP_PRM_CA_specific_expr_boxviolin_line_20230317.pdf', p, width = 20, height = 2.6 * length(plots))
+
+```
+
+### boxplot
+```{r}
+protinfo <- tbl_validated %>% select(organ, prot)
+protinfo %<>% left_join(prm, by = c('organ', 'prot')) %>% rename(pAdj = p_value)
+protinfo$cancer_type <- 'carcinoma'
+protinfo %<>% arrange(organ, desc(cancer_type))
+
+
+df_prot <- rio::import('20230318_PUH_PRM_submatrix_combine_5_missing.csv') # use submatrix combine matrix
+colnames(df_prot)[1:6]
+
+# change to DIA labels (cancer names)
+# df1 %>% select(FileName, DIA_ID, anatomical_classification) %>%
+#   left_join(df2) %>%
+#   select(DIA_ID, organ) %>%
+#   left_join(df_prot %>% select(-organ)) %>% 
+#   relocate(organ, .before = patient_ID)
+
+# change to DIA labels
+df_prot[str_detect(df_prot$tissue_name, 'large intestine'), 'organ'] <- 'colon'
+df_prot[str_detect(df_prot$tissue_name, 'rectum'), 'organ'] <- 'rectum'
+df_prot[str_detect(df_prot$tissue_name, 'cervi'), 'organ'] <- 'cervix_uteri'
+
+df_prot$organ <- sapply(df_prot$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+
+# remove brain and skin
+protinfo %<>% filter(!(organ %in% c('CE', 'SKI')))
+df_prot %<>% filter(!(organ %in% c('CE', 'SKI')))
+
+
+# CHANGE TO CANCER NAME
+ht_organ2cancer <- c('GBM', 'COCA', 'CESC', 'ESCA', 'FTCA', 'GBCA', 'RC', 'HCC', 'DLBCL', 'THYM', 'LUCA', 'BRCA', 'MUT', 'OC', 'PACA', 'PECA', 'PRCA', 'READ', 'GIST', 'GC', 'TGCT', 'LARCA', 'THCA', 'TOCA', 'ENCA')
+names(ht_organ2cancer) <- c('CE', 'CO', 'CU', 'ESO', 'FT', 'GB', 'KI', 'LI', 'LN', 'LTH', 'LU', 'MAG', 'MU', 'OV', 'PA', 'PEN', 'PR', 'REC', 'SI', 'ST', 'TE', 'THR', 'THY', 'TON', 'UTE')
+protinfo$organ <- ht_organ2cancer[protinfo$organ]
+df_prot$organ <- ht_organ2cancer[df_prot$organ]
+
+# add gene name
+uni_entr <- clusterProfiler::bitr(protinfo$prot,fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% setNames(c('UniprotID', 'target_genes'))
+protinfo <- dplyr::full_join(protinfo, uni_entr, by = c('prot' = 'UniprotID'))
+protinfo %<>% rename(UniprotID = prot)
+
+
+# filter missing ratio < 50%
+na_ratio <- c()
+for(i in 1:nrow(protinfo)){
+  this_prot <- protinfo$UniprotID[i]
+  this_organ <- protinfo$organ[i]
+  this_cancer <- protinfo$cancer_type[i]
+  
+  x <- df_prot %>% filter(organ == this_organ, cancer_type == this_cancer) %>%
+    pull(all_of(this_prot))
+  na_ratio[i] <- sum(is.na(x)) / length(x)
+}
+protinfo %<>% filter(all_of(na_ratio) < 0.5)
+df_prot %<>% dplyr::select(1:5, all_of(protinfo$UniprotID))
+
+
+df_info <- df_prot %>% dplyr::select(1:5)
+rownames(df_info) <- df_info$DIA_ID
+
+
+# remark
+df_prot[df_prot$cancer_type == 'carcinoma', 'cancer_type'] <- '1_carcinoma'
+df_prot[df_prot$cancer_type == 'adjacent', 'cancer_type'] <- '2_adjacent'
+
+# data prepare
+df_expr <- df_prot %>%
+  select(-DIA_ID) %>%
+  select(organ, cancer_type, everything())
+df_expr[df_expr$cancer_type == '1_carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == '2_adjacent', 'cancer_type'] <- 'Adj'
+
+
+
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+df_log10 <- df_expr %>% mutate_if(is.numeric, log10)
+na_filling <- log10(min(df_prot[, -(1:5)],na.rm = T)) + log10(0.5)
+
+plots <- list()
+for(i in 1:nrow(protinfo)){
+  # anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)},\npAdj={signif(protinfo$pAdj[i], 3)}")
+  # anno_txt <- sprintf("%1.2f (%1.2e)", 2 ^ protinfo$log2FC[i], protinfo$pAdj[i])
+  anno_txt <- sprintf("%1.2e", protinfo$pAdj[i])
+  plots[[i]] <- df_log10 %>%
+    select(organ, cancer_type, patient_ID, all_of(protinfo$UniprotID[i])) %>%
+    my_plot_CA_boxviolin_new(organ = protinfo$organ[i], na_cutoff = 1, refer = 'local',
+                         anno_txt = anno_txt, drawline = T)
+}
+
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+ggsave('TPHP_PRM_CA_specific_expr_box_20230716_v3.pdf', p, width = 297, height = 210, units = "mm")
+
+# write tables
+df_log10_output <- df_log10
+pm_output <- df_log10_output[, -(1:4)]
+pm_output[is.na(pm_output)] <- na_filling + log10(rnorm(sum(is.na(pm_output)), mean = 1, sd = 0.05))
+df_log10_output[, -(1:4)] <- pm_output
+list(log10 = df_log10, log10_fillna = df_log10_output) %>%
+  rio::export('TPHP_PRM_CA_specific_expr_box_20230701.xlsx')
+
+
+```
+
+
+# 4. tissue enriched classification (protein level)
+```{r}
+source("//172.16.13.136/share/members/yuel/2022/codes/20230207_ulhen_class.R")
+
+df1 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_PUH_PRM_submatrix_combine_5_missing.csv')
+dim(df1) # 914  36
+colnames(df1)[1:6]
+pm1 <- df1 %>% select(6:ncol(df1))
+na_filling <- min(pm1, na.rm = T) * 0.5 # calculate min * 0.5
+df1 %<>% filter(cancer_type == 'carcinoma') # carcinoma only
+
+pm1 <- df1 %>% select(6:ncol(df1))
+pm1[is.na(pm1)] <- na_filling
+
+
+# change names
+df1[str_detect(df1$tissue_name, 'large intestine'), 'organ'] <- 'colon'
+df1[str_detect(df1$tissue_name, 'rectum'), 'organ'] <- 'rectum'
+df1[str_detect(df1$tissue_name, 'cervi'), 'organ'] <- 'cervix uteri'
+
+# #get abbreviations
+# df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+# h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+# df1$organ <- sapply(df1$organ, function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+# 
+# 
+# # CHANGE TO CANCER NAME
+# ht_organ2cancer <- c('GBM', 'COCA', 'CESC', 'ESCA', 'FTCA', 'GBCA', 'RC', 'HCC', 'DLBCL', 'THYM', 'LUCA', 'BRCA', 'MUT', 'OC', 'PACA', 'PECA', 'PRCA', 'READ', 'GIST', 'GC', 'TGCT', 'LARCA', 'THCA', 'TOCA', 'ENCA')
+# names(ht_organ2cancer) <- c('CE', 'CO', 'CU', 'ESO', 'FT', 'GB', 'KI', 'LI', 'LN', 'LTH', 'LU', 'MAG', 'MU', 'OV', 'PA', 'PEN', 'PR', 'REC', 'SI', 'ST', 'TE', 'THR', 'THY', 'TON', 'UTE')
+# df1$organ <- ht_organ2cancer[df1$organ]
+
+
+
+
+
+
+pm1 <- df1 %>%
+  select(cancer_type, organ) %>% mutate(Group.1 = str_c(organ, cancer_type, sep = '_')) %>%
+  dplyr::select(-cancer_type, -organ) %>% cbind(pm1)
+pm2 <- pm1 %>% group_by(Group.1) %>%
+  summarise_all(median) %>%
+  ungroup()
+
+
+tissue_type_clas_all <- ulhen_class(pm2)
+dim(tissue_type_clas_all) # 26 32
+writexl::write_xlsx(tissue_type_clas_all, "//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230517PRM_Ulhen_classification_tissueType_carcinoma_prot.xlsx")
+
+
+
+tissue_mean1 <- tissue_type_clas_all
+symbol <- colnames(tissue_mean1)[-c(1)]
+
+# 20 enriched and group enriched proteins
+mean_clas_symbol_list <- apply(tissue_mean1[, -c(1)], 1, function(v) {
+  symbol[which(v == "tissue enriched" | v == "group enriched")]
+})
+length(unique(unlist(mean_clas_symbol_list)))
+
+# 16 tissue enriched
+mean_clas_symbol_list <- apply(tissue_mean1[, -c(1)], 1, function(v) {
+  symbol[which(v == "tissue enriched")]
+})
+length(unique(unlist(mean_clas_symbol_list)))
+en_tab <- sapply(mean_clas_symbol_list, function(v) {
+  data.frame(t(v))
+})
+a <- as.data.frame(t(plyr::rbind.fill(en_tab)))
+colnames(a) <- tissue_mean1$tissue_type
+
+write.csv(a, "//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230517PRM_Ulhen_classification_tissueType_cancer_enriched_proteins_prot.csv", row.names = F)
+
+
+b <- a[, grep("_carcinoma", colnames(a))]
+c <- b[, apply(b, 2, function(y) any(!is.na(y))), drop = F]
+d <- c[apply(c, 1, function(y) any(!is.na(y))), , drop = F]
+writexl::write_xlsx(d, "//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230517PRM_ULHEN_CLASS_cancerTargets_prot.xlsx")
+
+
+tmp <- d %>%
+  pivot_longer(everything(), names_to = 'label', values_to = 'prot', values_drop_na = T) %>% 
+  mutate(label = str_replace(label, '_carcinoma$', ''))
+ht_prot_organ <- tmp$label
+names(ht_prot_organ) <- tmp$prot
+
+selected_prots <- na.omit(unlist(d))
+
+
+tmp <- tissue_mean1 %>%
+  pivot_longer(-tissue_type, names_to = 'protein', values_to = 'Classification') %>%
+  filter(str_detect(Classification, 'enriched')) %>%
+  arrange(desc(Classification), tissue_type, protein)
+
+length(unique(tmp$protein)) # 20
+tmp %>% filter(Classification == 'tissue enriched') %>% pull(protein) %>% unique() %>% length() # 16
+tmp %>% filter(Classification == 'group enriched') %>% pull(protein) %>% unique() %>% length() # 4
+
+rio::export(tmp, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230517_PUH_Carcinoma_tissue_enriched16_group_enriched4_20prot.csv')
+rio::export(pm2, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_carcinoma_tissue_organ_median_20230517.xlsx')
+
+```
+
+
+
+## enriched proteins expression heatmap (organ level)
+```{r}
+# df0 <- rio::import('TPHP_normalData_for_classification_20230207.xlsx')
+pm2 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/PUH_PRM_carcinoma_tissue_organ_median_20230517.xlsx')
+pm2 %<>% rename(label = 'Group.1')
+tmp <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230517_PUH_Carcinoma_tissue_enriched16_group_enriched4_20prot.csv')
+tmp %<>% add_column(organ = str_split(tmp$tissue_type, '_') %>% sapply(head, 1),
+                   sample_type = str_split(tmp$tissue_type, '_') %>% sapply(tail, 1),
+                   .before = 2)
+tmp[tmp$sample_type == 'carcinoma', 'sample_type'] <- '1_carcinoma'
+tmp[tmp$sample_type == 'adjacent', 'sample_type'] <- '2_adjacent'
+
+
+# map to abbreviation
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+tmp$organ <- sapply(tmp$organ, function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+pm2 <- tmp %>%
+  distinct(tissue_type, organ, sample_type) %>%
+  rename(label = tissue_type) %>%
+  inner_join(pm2, by = 'label')
+# pm2$label %<>% 
+#   sapply(function(x) {
+#     x %>%
+#       str_split('_') %>%
+#       .[[1]] %>%
+#       sapply(function(e){
+#         ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+#       }) %>%
+#       str_c(collapse = '_')
+#   })
+
+# set order
+library(dendextend)
+# pm_heat_cor <- pm2 %>% column_to_rownames('label') %>%
+#   select(-(1:2)) %>% t() %>% cor(method = 'spearman')
+# pm_heat_dist <- as.dist(1 - pm_heat_cor) # 1-Spearman's rho
+# pm_heat_tree <- hclust(pm_heat_dist, method="complete")
+# pm_heat_dend <- as.dendrogram(pm_heat_tree) # create dendrogram object
+# plot(pm_heat_dend, horiz = T#, leaflab = "none"
+#      )
+pm_heat_cor <- pm2 %>% column_to_rownames('label') %>%
+  filter(sample_type == '1_carcinoma') %>%
+  select(-(1:2)) %>% t() %>% cor(method = 'spearman')
+pm_heat_dist <- as.dist(1 - pm_heat_cor) # 1-Spearman's rho
+pm_heat_tree <- hclust(pm_heat_dist, method="complete")
+pm_heat_dend <- as.dendrogram(pm_heat_tree) # create dendrogram object
+plot(pm_heat_dend, horiz = T#, leaflab = "none"
+     )
+rownames(pm2) <- pm2$label
+organs_ordered <- pm2[pm_heat_tree$labels[pm_heat_tree$order], 'organ']
+organs_ordered %<>% rev() # for mapping to barplot
+
+
+
+# uniprot to symbol
+prot_query <- clusterProfiler::bitr(tmp$protein, fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T)
+prot_query <- plyr::ddply(prot_query, 'UNIPROT', function(dfsub){
+  if(length(unique(dfsub$SYMBOL)) > 1){
+    dfsub <- data.frame(UNIPROT = dfsub$UNIPROT[1],
+                        SYMBOL = str_c(dfsub$SYMBOL, collapse = ';'))
+  }
+  return(dfsub)
+})
+prot_query %<>% setNames(c('protein', 'symbol'))
+protinfo <- full_join(tmp, prot_query, by = 'protein')
+
+
+# tissue enriched proteins
+protinfo_tisen <- protinfo %>%
+  filter(Classification == 'tissue enriched') %>%
+  dplyr::mutate(organ = factor(organ, levels = organs_ordered, ordered = T)) %>%
+  arrange(organ, sample_type) %>%
+  dplyr::mutate(organ = as.character(organ))
+
+df_tisen_organ <- pm2 %>%
+  select(label, organ, sample_type, all_of(protinfo_tisen$protein)) %>%
+  dplyr::mutate(organ = factor(organ, levels = organs_ordered, ordered = T)) %>%
+  arrange(organ, sample_type) %>%
+  dplyr::mutate(organ = as.character(organ))
+
+identical(colnames(df_tisen_organ)[-(1:3)], protinfo_tisen$protein) # TRUE
+
+# match to DIA data
+dia_en <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_Carcinoma_tissue_enriched1493_group_enriched1586_2984prot.csv')
+dia_en_prot <- dia_en %>% filter(Classification == 'tissue enriched') %>% pull(protein)
+intersect(protinfo_tisen$protein, dia_en_prot) # "Q7L513" "Q9H967" "Q6UXB2"
+setdiff(protinfo_tisen$protein, dia_en_prot) # "P56749" "Q02548" "Q15910" "Q9UH73" "Q9HCJ6" "Q9H0Q3" "Q9UIK4"
+
+# > intersect(protinfo_tisen$protein, dia_en_prot) # "Q7L513" "Q9H967" "Q6UXB2"
+# [1] "O15079" "O95990" "Q6UXB2" "Q7L513" "Q9H967" "Q6ZMG9"
+# > setdiff(protinfo_tisen$protein, dia_en_prot) # "P56749" "Q02548" "Q15910" "Q9UH73" "Q9HCJ6" "Q9H0Q3" "Q9UIK4"
+#  [1] "Q9UIK4" "Q9H0Q3" "Q9HCJ6" "P56749" "O15204" "Q02548" "Q15910" "Q9UH73" "O75683"
+# [10] "P22528"
+
+
+
+# keepna
+pm <- df_tisen_organ %>% select(-(1:3))
+pm %<>% log2()
+pm <- apply(pm, c(1, 2), as.numeric) %>% t() %>% data.frame()
+names(pm) <- df_tisen_organ$label
+
+# # quantile
+# pm_qu <- preprocessCore::normalize.quantiles(as.matrix(pm),copy=TRUE) %>% as.data.frame()
+# rownames(pm_qu) <- rownames(pm)
+# colnames(pm_qu) <- colnames(pm)
+# pm <- pm_qu
+
+# heatmap
+# na_pos <- is.na(pm)
+# na_fill <- min(pm, na.rm = T) + log2(0.1)
+# pm[is.na(pm)] <- na_fill
+pm.scale <- apply(pm, 1, scale) %>% t() %>% data.frame()
+# pm.scale[na_pos] <- NA
+names(pm.scale) <- names(pm)
+
+prot <- colnames(df_tisen_organ)[-(1:3)]
+row.organ <- protinfo_tisen$organ
+
+# pm.scale <- apply(pm, 1, scale) %>% t() %>% data.frame()
+# names(pm.scale) <- df_tisen$FileName
+pm_heat <- pm.scale[prot,]
+
+# concatenate uniprotid and gene names
+uniprot_gene <- data.frame(prot = paste0(protinfo_tisen$protein, '_', protinfo_tisen$symbol), row.names = protinfo_tisen$protein)
+srt <- row.names(pm_heat)
+pm_heat <- merge(pm_heat, uniprot_gene, by = 'row.names')
+row.names(pm_heat) <- pm_heat$prot
+pm_heat <- pm_heat[, -grep('^Row\\.names$|^prot$', colnames(pm_heat))]
+pm_heat <- pm_heat[srt, ]
+
+
+# set labels
+ann_row <- data.frame(row.organ=factor(row.organ, levels = organs_ordered, ordered = T),
+                      row.names =  row.names(pm_heat))
+ann_col <- data.frame(#Type = df_tisen_organ$sample_type,
+                      Organ = factor(df_tisen_organ$organ, levels = organs_ordered, ordered = T),
+                      row.names = names(pm_heat))
+
+# set colors
+require(RColorBrewer)
+# qual_col_pals <- brewer.pal.info[brewer.pal.info$category == 'qual',]
+# col_vector <- unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+# set.seed(10)
+# organ_color <- sample(col_vector, length(unique(ann_col$Organ)))
+# names(organ_color) <- unique(ann_col$Organ)
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+organs <- c(df_color$tissue[1:51], setdiff(df_tisen_organ$organ, df_color$tissue[1:51]))
+organ_color <- str_c('#', df_color$color[1:length(organs)])
+names(organ_color) <- organs
+organ_color <- organ_color[unique(df_tisen_organ$organ)] # remain organs only exists (25 cancers)
+
+# # cancer_color <- c(brewer.pal(10,"Paired")[c(6,8,3)])
+# cancer_color <- c("#EB4444", "#38C95C")
+# names(cancer_color) <- c('1_carcinoma', '2_adjacent')
+ann_colors <- list(Organ=organ_color,row.organ=organ_color#, Type=cancer_color
+                   )
+
+x <- cumsum(table(ann_row$row.organ))[-length(cumsum(table(ann_row$row.organ)))]
+pheatmap::pheatmap(pm_heat, color = c(brewer.pal(11,"RdYlBu")[9:7],brewer.pal(11,"RdYlBu")[4:2]), fontsize_col = 8,
+                   border_color = F,
+                   annotation_col = ann_col, annotation_row = ann_row,
+                   gaps_col = cumsum(table(ann_col$Organ))[-length(cumsum(table(ann_col$Organ)))],
+                   gaps_row = x[!duplicated(x)],
+                   fontsize_row=3,
+                   annotation_colors = ann_colors,na_col = "grey60",#scale = "row",
+                   cluster_rows = F, cluster_cols = F,show_rownames = T, show_colnames = F
+)
+
+# plot
+dim(pm_heat) # 16 10
+a <- pheatmap::pheatmap(pm_heat, color = c(brewer.pal(11,"RdYlBu")[9:7],brewer.pal(11,"RdYlBu")[4:2]), fontsize_col = 8,
+                   border_color = F,
+                   annotation_col = ann_col, annotation_row = ann_row,
+                   gaps_col = cumsum(table(ann_col$Organ))[-length(cumsum(table(ann_col$Organ)))],
+                   gaps_row = x[!duplicated(x)],
+                   fontsize_row=8,
+                   annotation_colors = ann_colors,na_col = "grey60",#scale = "row",
+                   cluster_rows = F, cluster_cols = F,show_rownames = T, show_colnames = F,
+                   filename = "TPHP_Carcinoma_Ulhen_tissue_enriched_heatmap_scale_16protein_10cancers_20230517.pdf",width=4.5,height=5.5
+)
+
+
+```
+
+
+### ===scatter plot===
+```{r}
+# data prepare
+df1 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_PUH_PRM_submatrix_combine_5_missing.csv')
+dim(df1) # 914  36
+colnames(df1)[1:6]
+df1[, -(1:5)] <- log2(df1[, -(1:5)])
+df1 %<>% filter(cancer_type == 'carcinoma')
+df1 %<>% select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+identical(protinfo_tisen$protein, colnames(df1)[-(1:5)]) # TRUE
+
+# remove brain and skin; select tissue enriched
+protinfo_tisen <- protinfo %>%
+  filter(!(organ %in% c('CE', 'SKI')),
+         Classification == 'tissue enriched'
+  ) %>%
+  arrange(organ, protein)
+  
+df_tisen_organ <- df1 %>%
+  filter(!(organ %in% c('CE', 'SKI'))) %>%
+  select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+  
+# map to abbreviation
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+protinfo_tisen$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+df_tisen_organ$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+
+
+# na_filling <- df_selected %>% select(-(1:5)) %>% min(na.rm = T) + log2(0.8) # in fact, 0.5
+# df_expr <- df_selected %>% select(organ, cancer_type, all_of(prot_targets))
+# 
+# plots <- list()
+# for(i in seq_along(prot_targets)){
+#   df <- df_expr %>% select(1:2, 2+i)
+#   plots[[i]] <- my_plot_CA(df, organ = organ_targets[i], refer = 'local')
+# }
+
+
+colnames(df_tisen_organ)
+df_expr <- df_tisen_organ %>% select(organ, cancer_type, 6:ncol(df_tisen_organ))
+df_expr[df_expr$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+
+plots <- list()
+for(i in 1:(ncol(df_expr)-2)){
+  # anno_txt <- str_glue("log2FC={round(protinfo$log2FC[i], 2)}, pAdj={signif(protinfo$pAdj[i], 3)}")
+  plots[[i]] <- df_expr %>%
+    select(1:2, i+2) %>%
+    my_plot_C(organ = protinfo_tisen$organ[i], refer = 'local')
+}
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+
+ggsave('TPHP_Carcinoma_Ulhen_tissue_enriched_expression_50NA_20230314.pdf', p, width = 10, height = 3 * length(plots))
+
+unique(protinfo_tisen$protein) 
+# [1] "Q9UIK4" "Q9H0Q3" "Q9HCJ6" "O15079" "O95990" "O15194" "Q6UXB2" "P56749" "Q02548" "Q15910" "Q7L513" "Q9H967" "Q9UH73"
+# [14] "O75683" "P22528" "Q6ZMG9"
+```
+
+
+### boxplot--PRM
+```{r}
+# data prepare
+df1 <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230318_PUH_PRM_submatrix_combine_5_missing.csv')
+dim(df1) # 914  36
+colnames(df1)[1:6]
+df1[, -(1:5)] <- log2(df1[, -(1:5)])
+df1 %<>% filter(cancer_type == 'carcinoma')
+df1 %<>% select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+identical(protinfo_tisen$protein, colnames(df1)[-(1:5)]) # TRUE
+
+# change names
+df1[str_detect(df1$tissue_name, 'large intestine'), 'organ'] <- 'colon'
+df1[str_detect(df1$tissue_name, 'rectum'), 'organ'] <- 'rectum'
+df1[str_detect(df1$tissue_name, 'cervi'), 'organ'] <- 'cervix uteri'
+
+# remove brain and skin; select tissue enriched
+protinfo_tisen <- protinfo %>%
+  filter(!(organ %in% c('CE', 'SKI')),
+         Classification == 'tissue enriched'
+  ) %>%
+  arrange(organ, protein)
+  
+df_tisen_organ <- df1 %>%
+  filter(!(organ %in% c('brain', 'skin'))) %>%
+  select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+  
+# map to abbreviation
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+protinfo_tisen$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+df_tisen_organ$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+
+# CHANGE TO CANCER NAME
+ht_organ2cancer <- c('GBM', 'COCA', 'CESC', 'ESCA', 'FTCA', 'GBCA', 'RC', 'HCC', 'DLBCL', 'THYM', 'LUCA', 'BRCA', 'MUT', 'OC', 'PACA', 'PECA', 'PRCA', 'READ', 'GIST', 'GC', 'TGCT', 'LARCA', 'THCA', 'TOCA', 'ENCA')
+names(ht_organ2cancer) <- c('CE', 'CO', 'CU', 'ESO', 'FT', 'GB', 'KI', 'LI', 'LN', 'LTH', 'LU', 'MAG', 'MU', 'OV', 'PA', 'PEN', 'PR', 'REC', 'SI', 'ST', 'TE', 'THR', 'THY', 'TON', 'UTE')
+protinfo_tisen$organ <- ht_organ2cancer[protinfo_tisen$organ]
+df_tisen_organ$organ <- ht_organ2cancer[df_tisen_organ$organ]
+
+
+colnames(df_tisen_organ)
+df_expr <- df_tisen_organ %>% select(organ, cancer_type, 6:ncol(df_tisen_organ))
+df_expr[df_expr$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+
+
+
+source('//172.16.13.136/share/members/jiangwenhao/code/myQC.R')
+df_log10 <- df_expr %>% mutate_if(is.numeric, function(e) {log10(2 ^ e)})
+df_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230313TPHP_PRM_prot_matrix_48.csv')
+na_filling <- log10(min(df_prot[, -1],na.rm = T)) + log10(0.5)
+
+plots <- list()
+for(i in 1:(ncol(df_log10)-2)){
+  # anno_txt <- str_glue("log2FC={round(protinfo_tisen$log2FC[i], 2)}, pAdj={signif(protinfo_tisen$pAdj[i], 3)}")
+  plots[[i]] <- df_log10 %>%
+    select(1:2, i+2) %>%
+    my_plot_C_boxviolin_new(organ = protinfo_tisen$organ[i], na_cutoff = 1, refer = 'local')
+}
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+ggsave('TPHP_PRM_Carcinoma_Ulhen_tissue_enriched_expression_boxplot_20230716.pdf', p, width = 210, height = 297, units = "mm")
+
+# write tables
+df_log10_output <- df_log10
+pm_output <- df_log10_output[, -(1:2)]
+pm_output[is.na(pm_output)] <- na_filling + log10(rnorm(sum(is.na(pm_output)), mean = 1, sd = 0.05))
+df_log10_output[, -(1:2)] <- pm_output
+list(log10 = df_log10, log10_fillna = df_log10_output) %>%
+  rio::export('TPHP_PRM_Carcinoma_Ulhen_tissue_enriched_expression_boxplot_20230701.xlsx')
+
+
+# DIA-PRM matched only
+df_log10 %<>% select(organ, cancer_type, all_of(intersect(protinfo_tisen$protein, dia_en_prot)))
+rownames(protinfo_tisen) <- protinfo_tisen$protein
+protinfo_tisen <- protinfo_tisen[all_of(intersect(protinfo_tisen$protein, dia_en_prot)), ]
+rownames(protinfo_tisen) <- NULL
+
+plots <- list()
+for(i in 1:(ncol(df_log10)-2)){
+  # anno_txt <- str_glue("log2FC={round(protinfo_tisen$log2FC[i], 2)}, pAdj={signif(protinfo_tisen$pAdj[i], 3)}")
+  plots[[i]] <- df_log10 %>%
+    select(1:2, i+2) %>%
+    my_plot_C_boxviolin_new(organ = protinfo_tisen$organ[i], na_cutoff = 1, refer = 'local')
+}
+p <- eval(parse(text = stringr::str_c('ggpubr::ggarrange(', stringr::str_c('plots[[', 1:length(plots), ']]$p', collapse = ', '), ', nrow = length(plots))')))
+ggsave('TPHP_PRM_Carcinoma_Ulhen_tissue_enriched_DIAmatch_expression_boxplot_20230716.pdf', p, width = 210, height = 297 / 3, units = "mm")
+
+# write tables
+df_log10_output <- df_log10
+pm_output <- df_log10_output[, -(1:2)]
+pm_output[is.na(pm_output)] <- na_filling + log10(rnorm(sum(is.na(pm_output)), mean = 1, sd = 0.05))
+df_log10_output[, -(1:2)] <- pm_output
+list(log10 = df_log10, log10_fillna = df_log10_output) %>%
+  rio::export('TPHP_PRM_Carcinoma_Ulhen_tissue_enriched_DIAmatch_expression_boxplot_20230701.xlsx')
+
+
+```
+
+
+### ===boxplot--DIA===
+```{r}
+# data prepare
+df1 <- read.csv('//172.16.13.136/share/members/yuel/2022/tables/20230318_PUH_submatrix_combine_5_missing.csv', check.names = F) # CA combine 50 missing submatrice
+df1 %<>% rename(cancer_type = sample_type)
+colnames(df1)[1:7]
+df1[, -(1:6)] <- log2(df1[, -(1:6)])
+# i_first_prot <- 7
+# pm1 <- df1 %>% select(i_first_prot:ncol(df1))
+# na_filling <- min(pm1, na.rm = T) * 0.5 # calculate min * 0.5
+df1 %<>% filter(cancer_type == 'carcinoma') # carcinoma only
+
+pm1 <- df1 %>% select(i_first_prot:ncol(df1))
+pm1[is.na(pm1)] <- na_filling
+
+pm1 <- df1 %>%
+  select(cancer_type, organ) %>% mutate(Group.1 = str_c(organ, cancer_type, sep = '_')) %>%
+  dplyr::select(-cancer_type, -organ) %>% cbind(pm1)
+
+
+
+
+
+
+
+df1 %<>% select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+identical(protinfo_tisen$protein, colnames(df1)[-(1:5)]) # TRUE
+
+# remove brain and skin; select tissue enriched
+protinfo_tisen <- protinfo %>%
+  filter(!(organ %in% c('CE', 'SKI')),
+         Classification == 'tissue enriched'
+  ) %>%
+  arrange(organ, protein)
+  
+df_tisen_organ <- df1 %>%
+  filter(!(organ %in% c('CE', 'SKI'))) %>%
+  select(DIA_ID:patient_ID, all_of(protinfo_tisen$protein))
+  
+# map to abbreviation
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+protinfo_tisen$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+df_tisen_organ$organ %<>% sapply(function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+colnames(df_tisen_organ)
+df_expr <- df_tisen_organ %>% select(organ, cancer_type, 6:ncol(df_tisen_organ))
+df_expr[df_expr$cancer_type == 'carcinoma', 'cancer_type'] <- 'C'
+df_expr[df_expr$cancer_type == 'adjacent', 'cancer_type'] <- 'Adj'
+
+
+```
+
+
+
+
+#5. locally enriched proteins
+```{r}
+# create abbreviation hash table
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+
+
+tmp <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/PRM/20230313_PUH_Carcinoma_tissue_enriched5_group_enriched16_21prot.csv')
+tmp %<>% add_column(organ = str_split(tmp$tissue_type, '_') %>% sapply(head, 1),
+                   sample_type = str_split(tmp$tissue_type, '_') %>% sapply(tail, 1),
+                   .before = 2)
+tmp[tmp$sample_type == 'carcinoma', 'sample_type'] <- '1_carcinoma'
+tmp[tmp$sample_type == 'adjacent', 'sample_type'] <- '2_adjacent'
+
+
+# map to abbreviation
+tmp$organ <- sapply(tmp$organ, function(e){
+  ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+})
+```
+
+
+

@@ -1,0 +1,663 @@
+---
+title: "rtks"
+author: ""
+date: '2022-10-15'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+
+library(tidyverse)
+library(magrittr)
+library(reticulate)
+source_python('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/TPHP_carcinoma_upregulated_overlapped_drugbank/drugbank_crawl_source.py') # source from python
+
+```
+
+```{python}
+import time
+import re
+import json
+import requests
+import pandas as pd
+
+def search_uniprotid(uniprotid):
+    print(f'Query the protein {uniprotid}...')
+    headers = {'Accept': 'application/json',
+    'Referer': 'https://www.uniprot.org/',
+    'sec-ch-ua': '"Chromium";v="104", " Not A;Brand";v="99", "Google Chrome";v="104"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36'}
+    url = f'https://rest.uniprot.org/genecentric/{uniprotid}'
+    response = requests.get(url, headers=headers)
+    # print(response.text)
+    for i in range(10):
+        if response.status_code == 200:
+            break
+        else:
+            time.sleep(10)
+            response = requests.get(url, headers=headers)
+            
+    if response.status_code != 200:
+        print(f'Error! The request status code was {response.status_code}.')
+        gene_prot = '-'
+    else:
+        data = json.loads(response.text)
+        if len(data['canonicalProtein']) == 0:
+            gene_prot = '-'
+        else:
+            gene_name = data['canonicalProtein']['geneName']
+            prot_name = data['canonicalProtein']['proteinName']
+            gene_prot = gene_name + '_' + prot_name
+    return gene_prot
+
+```
+
+# rtks heatmap
+```{r}
+# rm(list = ls())
+
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/')
+
+# df <- read.csv('20221015_rtks_fc_v2.csv', check.names = F)
+# names(df)[1] <- 'prot'
+# df %<>% column_to_rownames('prot')
+# 
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/RTKs.xlsx')
+
+# df_label <- read.csv('20221015_rtks_label_v2.csv', check.name = F)
+# update Adj P & fc
+df_dep <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/diff_expr/20230318_TPHP_dysregulated_proteins_filter50NAByOrgan.xlsx')
+df_label <- df_dep %>%
+  filter(protein %in% df$From) %>%
+  select(organ, protein, log2FC, pAdj_t) %>%
+  setNames(c('organ', 'prot', 'fc', 'p_value'))
+
+df <- df_label %>%
+  select(organ, prot, fc) %>%
+  pivot_wider(names_from = 'organ', values_from = 'fc') %>%
+  column_to_rownames('prot')
+
+
+
+df_label_p <- df_label %>%
+  select(prot, p_value, organ)
+
+df_label_p$p_label[df_label_p$p_value < 0.001] <- '***'
+df_label_p$p_label[df_label_p$p_value >= 0.001 & df_label_p$p_value < 0.01] <- '**'
+df_label_p$p_label[df_label_p$p_value >= 0.01 & df_label_p$p_value < 0.05] <- '*'
+df_label_p %<>%
+  pivot_wider(prot, names_from = organ, values_from = p_label) %>%
+  column_to_rownames('prot')
+df_label_p[is.na(df_label_p)] <- ''
+
+
+# rownames(df) <- sapply(rownames(df), function(e){
+#   gene_prot <- py$search_uniprotid(e)
+#   str_c(e, '_', gene_prot)
+# })
+# rownames(df_label_p) <- sapply(rownames(df_label_p), function(e){
+#   gene_prot <- py$search_uniprotid(e)
+#   str_c(e, '_', gene_prot)
+# })
+
+clusterProfiler::bitr(rownames(df), fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T)
+rownames(df) <- clusterProfiler::bitr(rownames(df), fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite('label', UNIPROT, SYMBOL) %>% pull(label)
+
+clusterProfiler::bitr(rownames(df_label_p), fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T)
+rownames(df_label_p) <- clusterProfiler::bitr(rownames(df_label_p), fromType = "UNIPROT",toType = "SYMBOL",OrgDb = "org.Hs.eg.db",drop = T) %>% unite('label', UNIPROT, SYMBOL) %>% pull(label)
+
+identical(rownames(df), rownames(df_label_p)) # TRUE
+
+
+dys_organ_num <- apply(df_label_p, 1, function(e) sum(str_detect(e, '\\*'))) %>% unname
+df <- df[-which(dys_organ_num == 0), ]
+df_label_p <- df_label_p[-which(dys_organ_num == 0), ]
+
+# # carcinoma names
+# ht_organ2cancer <- c('Glioblastoma', 'Cervical carcinoma', 'Colon carcinoma', 'Esophageal carcinoma', 'Fallopian tube carcinoma', 'Gallbladder carcinoma', 'Renal carcinoma', 'Hepatocellular carcinoma', 'Lung carcinoma', 'Diffused large B-cell carcinoma', 'Breast carcinoma', 'Muscle tumor', 'Ovarian carcinoma', 'Pancreas carcinoma', 'Male genitalia carcinoma', 'Prostate carcinoma', 'Rectum carcinoma', 'Gastrointestinal stromal tumors', 'Gastric carcinoma', 'Testis carcinoma', 'Laryngocarcinoma', 'Thyoma and thymic carcinoma', 'Thyroid carcinoma', 'Tongue carcinoma', 'Endometrial carcinoma')
+# names(ht_organ2cancer) <- c('brain', 'cervix uteri', 'colon', 'esophagus', 'fallopian tube', 'gall bladder', 'kidney', 'liver', 'lung', 'lymph node', 'mammary gland', 'muscle', 'ovary', 'pancreas', 'penis', 'prostate', 'rectum', 'small intestine', 'stomach', 'testis', 'throat', 'thymus', 'thyroid', 'tongue', 'uterus')
+colnames(df)[2] == 'cervix uteri' # FALSE
+colnames(df)[2] <- 'cervix uteri'
+
+
+#get abbreviations
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+colnames(df) <- sapply(colnames(df), function(e) ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e))
+
+
+# CHANGE TO CANCER NAME
+ht_organ2cancer <- c('GBM', 'COCA', 'CESC', 'ESCA', 'FTCA', 'GBCA', 'RC', 'HCC', 'DLBCL', 'THYM', 'LUCA', 'BRCA', 'MUT', 'OC', 'PACA', 'PECA', 'PRCA', 'READ', 'GIST', 'GC', 'TGCT', 'LARCA', 'THCA', 'TOCA', 'ENCA')
+names(ht_organ2cancer) <- c('CE', 'CO', 'CU', 'ESO', 'FT', 'GB', 'KI', 'LI', 'LN', 'LTH', 'LU', 'MAG', 'MU', 'OV', 'PA', 'PEN', 'PR', 'REC', 'SI', 'ST', 'TE', 'THR', 'THY', 'TON', 'UTE')
+colnames(df) <- ht_organ2cancer[colnames(df)]
+
+quantile(df, na.rm = T)
+#          0%         25%         50%         75%        100% 
+# -2.89434215 -0.07601156  0.29268704  0.80679403  5.22148464 
+hist(as.matrix(df))
+
+
+#breaks
+my_breaks <- seq(-4, 4, by = 0.01)
+
+#colors
+my_colors <- c(colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[1:3]))(length(my_breaks)/2/8*6),
+               colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[3:5], 'white'))(length(my_breaks)/2/8*2),
+               colorRampPalette(colors = c('white', RColorBrewer::brewer.pal(11, "PiYG")[7:9]))(length(my_breaks)/2/8*2),
+               colorRampPalette(colors = c(RColorBrewer::brewer.pal(11, "PiYG")[9:11]))(length(my_breaks)/2/8*6)
+               )
+my_colors %<>% rev() # high intensity should be hot while low to be cold
+
+# df[is.na(df)] <- 0
+a <- pheatmap::pheatmap(df, fontsize = 16,
+         # color = colorRampPalette(colors = c("#74ADD1", "#ABD9E9", "#E0F3F8", "white", "#FDAE61", "#F46D43", "#D73027"))(100),
+         color = my_colors,
+         legend_breaks = seq(-4,4,2),
+         breaks = my_breaks,
+         display_numbers = df_label_p, fontsize_number = 25, number_color = '#000000',angle_col = 90,
+         cluster_rows = T, cluster_cols = T,na_col = "#DDDDDD",
+         filename = '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_rtks_heatmap_20230629.pdf',
+         width = 16, height = 9)
+
+# pheatmap(df, fontsize = 16,
+#          display_numbers = df_label_p, fontsize_number = 25,
+#          cluster_rows = F, cluster_cols = F,
+#          filename = '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_rtks_heatmap_no_clustering_20230202.pdf',
+#          width = 20, height = 10)
+
+df[a$tree_row$order, a$tree_col$order] %>% rio::export('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_rtks_heatmap_20230519.xlsx')
+
+
+```
+
+
+
+
+
+
+
+
+# rtks and immunue-therapy targets correlation
+## protein lists
+```{r}
+# df_immune <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/drugbank_result_immune_therapy_combined_edited2_reviewed_v2.xlsx', sheet = 'DRUG&TARGETS')
+# immune_targets <- unique(df_immune$TARGET)
+# 
+# uniprotid <- c()
+# for(i in seq_along(immune_targets)){
+#   print(str_glue('{immune_targets[i]}  {i}/{length(immune_targets)}'))
+#   uniprotid[i] <- protname_to_uniprotid(immune_targets[i])
+# }
+# df_prot <- data.frame(TARGET = immune_targets, UniprotID = uniprotid)
+# rio::export(df_prot, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/immune_therapy_protein_name_id_match.tsv')
+
+df_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/immune_therapy_protein_name_id_match.tsv')
+immune_prots <- df_prot %>% filter(UniprotID != '-') %>% pull(UniprotID)
+immune_prots_add <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/drugbank_result_immune_therapy_combined_edited2_reviewed_v2.xlsx', sheet = 'protein_annotation') %>%
+  pull(From)
+immune_prots %<>% union(immune_prots_add)
+
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/RTKs.xlsx')
+# names(df)[1] <- 'prot'
+# df %<>% column_to_rownames('prot')
+rtk_prots <- df$From
+
+
+```
+
+
+## correlation
+```{r}
+# CA/ADJ data
+# df <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx')
+df_ca <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx', col_types = c(rep('text', 5), rep('numeric', 9800)))
+# identical(df, df_ca) # FALSE
+# equal_col <- sapply(1:ncol(df), function(i){
+#   identical(df[, i], df_ca[, i])
+# })
+# sum(!equal_col) # 7
+# which(!equal_col)
+
+
+# combine DIA_ID
+df_info <- df_ca %>% select(1:5) %>% distinct()
+mat <- df_ca %>% select(-(2:5))
+mat %<>% group_by(DIA_ID) %>%
+  summarise_all(function(x){log2(mean(2^x, na.rm = T))})
+df_ca <- inner_join(df_info, mat, by = 'DIA_ID')
+
+
+
+# correlation
+immune_prots %<>% intersect(colnames(df_ca)) # 131 proteins
+rtk_prots %<>% intersect(colnames(df_ca)) # 19 proteins
+
+
+# missing ratio < 50%
+mat1 <- df_ca %>% select(DIA_ID, all_of(c(immune_prots, rtk_prots)))
+mat2 <- df_ca %>% select(DIA_ID, organ, all_of(c(immune_prots, rtk_prots)))
+
+
+
+mat1 <- mat1[, apply(mat1, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+immune_prots1 <- immune_prots %>% intersect(colnames(mat1))
+rtk_prots1 <- rtk_prots %>% intersect(colnames(mat1))
+mat1_cor_withna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+  })
+}) # one row is a rtk protein; one column is an immune target
+
+nafill <- min(select(mat1, -DIA_ID), na.rm = T) + log2(0.8)
+mat1[is.na(mat1)] <- nafill
+mat1_cor_withoutna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+  })
+}) # one row is a rtk protein; one column is an immune target
+mat1_rlt_ls <- list(
+  pancancer_withna = as.data.frame(mat1_cor_withna) %>% rownames_to_column('rtk_prot'),
+  pancancer_fillna = as.data.frame(mat1_cor_withoutna) %>% rownames_to_column('rtk_prot')
+)
+rio::export(mat1_rlt_ls, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_CA_immuneTarget_rtk_correlation_20230519.xlsx')
+
+
+mat2_rlt_ls <- plyr::dlply(mat2, 'organ', function(mat){
+  mat <- mat[, apply(mat, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+  immune_prots2 <- immune_prots %>% intersect(colnames(mat))
+  rtk_prots2 <- rtk_prots %>% intersect(colnames(mat))
+  mat_cor_withna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  
+  nafill <- min(select(mat, -DIA_ID, -organ), na.rm = T) + log2(0.8)
+  mat[is.na(mat)] <- nafill
+  mat_cor_withoutna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  return(list(cor_withna = as.data.frame(mat_cor_withna) %>% rownames_to_column('rtk_prot'),
+              cor_fillna = as.data.frame(mat_cor_withoutna) %>% rownames_to_column('rtk_prot')))
+})
+
+names_tmp <- c()
+mat2_rlt_ls_new <- list()
+for(i in seq_along(mat2_rlt_ls)){
+  organ <- names(mat2_rlt_ls)[i]
+  names_tmp[2*i-1] <- str_c(organ, 'withna', sep = '_')
+  names_tmp[2*i] <- str_c(organ, 'fillna', sep = '_')
+  
+  mat2_rlt_ls_new[[2*i-1]] <- mat2_rlt_ls[[i]][[1]]
+  mat2_rlt_ls_new[[2*i]] <- mat2_rlt_ls[[i]][[2]]
+}
+names(mat2_rlt_ls_new) <- names_tmp
+rio::export(mat2_rlt_ls_new, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_CA_immuneTarget_rtk_correlation_tissueLevel_20230519.xlsx')
+
+
+
+```
+
+
+
+## correlation remove Adjacent
+```{r}
+# CA/ADJ data
+# df <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx')
+df_ca <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx', col_types = c(rep('text', 5), rep('numeric', 9800)))
+df_ca %<>% filter(cancer_type == 'carcinoma')
+# identical(df, df_ca) # FALSE
+# equal_col <- sapply(1:ncol(df), function(i){
+#   identical(df[, i], df_ca[, i])
+# })
+# sum(!equal_col) # 7
+# which(!equal_col)
+
+
+# combine DIA_ID
+df_info <- df_ca %>% select(1:5) %>% distinct()
+mat <- df_ca %>% select(-(2:5))
+mat %<>% group_by(DIA_ID) %>%
+  summarise_all(function(x){log2(mean(2^x, na.rm = T))})
+df_ca <- inner_join(df_info, mat, by = 'DIA_ID')
+
+
+
+# correlation
+immune_prots %<>% intersect(colnames(df_ca)) # 131 proteins
+rtk_prots %<>% intersect(colnames(df_ca)) # 19 proteins
+
+
+# missing ratio < 50%
+mat1 <- df_ca %>% select(DIA_ID, all_of(c(immune_prots, rtk_prots)))
+mat2 <- df_ca %>% select(DIA_ID, organ, all_of(c(immune_prots, rtk_prots)))
+
+
+
+mat1 <- mat1[, apply(mat1, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+immune_prots1 <- immune_prots %>% intersect(colnames(mat1))
+rtk_prots1 <- rtk_prots %>% intersect(colnames(mat1))
+mat1_cor_withna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+  })
+}) # one row is a rtk protein; one column is an immune target
+
+nafill <- min(select(mat1, -DIA_ID), na.rm = T) + log2(0.8)
+mat1[is.na(mat1)] <- nafill
+mat1_cor_withoutna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+  })
+}) # one row is a rtk protein; one column is an immune target
+mat1_rlt_ls <- list(
+  pancancer_withna = as.data.frame(mat1_cor_withna) %>% rownames_to_column('rtk_prot'),
+  pancancer_fillna = as.data.frame(mat1_cor_withoutna) %>% rownames_to_column('rtk_prot')
+)
+rio::export(mat1_rlt_ls, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_correlation_20230519.xlsx')
+
+
+mat2_rlt_ls <- plyr::dlply(mat2, 'organ', function(mat){
+  mat <- mat[, apply(mat, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+  immune_prots2 <- immune_prots %>% intersect(colnames(mat))
+  rtk_prots2 <- rtk_prots %>% intersect(colnames(mat))
+  mat_cor_withna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  
+  nafill <- min(select(mat, -DIA_ID, -organ), na.rm = T) + log2(0.8)
+  mat[is.na(mat)] <- nafill
+  mat_cor_withoutna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'pearson')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  return(list(cor_withna = as.data.frame(mat_cor_withna) %>% rownames_to_column('rtk_prot'),
+              cor_fillna = as.data.frame(mat_cor_withoutna) %>% rownames_to_column('rtk_prot')))
+})
+
+names_tmp <- c()
+mat2_rlt_ls_new <- list()
+for(i in seq_along(mat2_rlt_ls)){
+  organ <- names(mat2_rlt_ls)[i]
+  names_tmp[2*i-1] <- str_c(organ, 'withna', sep = '_')
+  names_tmp[2*i] <- str_c(organ, 'fillna', sep = '_')
+  
+  mat2_rlt_ls_new[[2*i-1]] <- mat2_rlt_ls[[i]][[1]]
+  mat2_rlt_ls_new[[2*i]] <- mat2_rlt_ls[[i]][[2]]
+}
+names(mat2_rlt_ls_new) <- names_tmp
+rio::export(mat2_rlt_ls_new, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_correlation_tissueLevel_20230519.xlsx')
+
+
+```
+
+
+
+# Add immune check point targets
+## protein lists
+```{r}
+# df_immune <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/drugbank_result_immune_therapy_combined_edited2_reviewed_v2.xlsx', sheet = 'DRUG&TARGETS')
+# immune_targets <- unique(df_immune$TARGET)
+# 
+# uniprotid <- c()
+# for(i in seq_along(immune_targets)){
+#   print(str_glue('{immune_targets[i]}  {i}/{length(immune_targets)}'))
+#   uniprotid[i] <- protname_to_uniprotid(immune_targets[i])
+# }
+# df_prot <- data.frame(TARGET = immune_targets, UniprotID = uniprotid)
+# rio::export(df_prot, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/immune_therapy_protein_name_id_match.tsv')
+
+df_prot <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/immune_therapy_protein_name_id_match.tsv')
+immune_prots <- df_prot %>% filter(UniprotID != '-') %>% pull(UniprotID)
+immune_prots_add <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/drugbank_result_immune_therapy_combined_edited2_reviewed_v2.xlsx', sheet = 'protein_annotation') %>%
+  pull(From)
+immune_prots %<>% union(immune_prots_add)
+immune_checkpoints <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/drugbank_result_immune_therapy_combined_edited2_reviewed_v2_sheet4_20221026.xlsx') %>%
+  pull(UniprotID) %>% str_split(';') %>% unlist() %>% setdiff('-')
+setdiff(immune_checkpoints, immune_prots)
+immune_prots %<>% union(immune_checkpoints)
+
+
+df <- readxl::read_excel('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/RTKs.xlsx')
+# names(df)[1] <- 'prot'
+# df %<>% column_to_rownames('prot')
+rtk_prots <- df$From
+
+
+
+
+
+```
+
+
+## use Spearman correlation
+```{r}
+# CA/ADJ data
+# df <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx')
+df_ca <- readxl::read_excel('//172.16.13.136/share/members/yuel/2022/tables/20220714TPHP_CA_remove_05NA_1099_9800.xlsx', col_types = c(rep('text', 5), rep('numeric', 9800)))
+df_ca %<>% filter(cancer_type == 'carcinoma')
+# identical(df, df_ca) # FALSE
+# equal_col <- sapply(1:ncol(df), function(i){
+#   identical(df[, i], df_ca[, i])
+# })
+# sum(!equal_col) # 7
+# which(!equal_col)
+
+
+# combine DIA_ID
+df_info <- df_ca %>% select(1:5) %>% distinct()
+mat <- df_ca %>% select(-(2:5))
+mat %<>% group_by(DIA_ID) %>%
+  summarise_all(function(x){log2(mean(2^x, na.rm = T))})
+df_ca <- inner_join(df_info, mat, by = 'DIA_ID')
+
+
+
+# correlation
+immune_prots %<>% intersect(colnames(df_ca)) # 136 proteins
+rtk_prots %<>% intersect(colnames(df_ca)) # 19 proteins
+
+
+# missing ratio < 50%
+mat1 <- df_ca %>% select(DIA_ID, all_of(c(immune_prots, rtk_prots)))
+mat2 <- df_ca %>% select(DIA_ID, organ, all_of(c(immune_prots, rtk_prots)))
+
+
+
+mat1 <- mat1[, apply(mat1, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+immune_prots1 <- immune_prots %>% intersect(colnames(mat1))
+rtk_prots1 <- rtk_prots %>% intersect(colnames(mat1))
+mat1_cor_withna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'spearman')
+  })
+}) # one row is a rtk protein; one column is an immune target
+mat1_corp_withna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat[, proti]
+    x2 <- mat[, protr]
+    index_select <- !is.na(x1) & !is.na(x2)
+    x1 <- x1[index_select]
+    x2 <- x2[index_select]
+    cor.test(x1, x2, method = "spearman", conf.level = 0.95, exact = F)$p.value
+  })
+}) # one row is an rtk protein; one column is an immune target
+
+
+nafill <- min(select(mat1, -DIA_ID), na.rm = T) + log2(0.8)
+mat1[is.na(mat1)] <- nafill
+mat1_cor_withoutna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat1[, proti]
+    x2 <- mat1[, protr]
+    cor(x1, x2, use = "pairwise.complete.obs", method = 'spearman')
+  })
+}) # one row is a rtk protein; one column is an immune target
+mat1_corp_withoutna <- sapply(immune_prots1, function(proti){
+  sapply(rtk_prots1, function(protr){
+    x1 <- mat[, proti]
+    x2 <- mat[, protr]
+    index_select <- !is.na(x1) & !is.na(x2)
+    x1 <- x1[index_select]
+    x2 <- x2[index_select]
+    cor.test(x1, x2, method = "spearman", conf.level = 0.95, exact = F)$p.value
+  })
+}) # one row is an rtk protein; one column is an immune target
+
+mat1_rlt_ls <- list(
+  pancancer_withna = as.data.frame(mat1_cor_withna) %>% rownames_to_column('rtk_prot'),
+  pancancer_fillna = as.data.frame(mat1_cor_withoutna) %>% rownames_to_column('rtk_prot')
+)
+rio::export(mat1_rlt_ls, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_SpearmanCorrelation_20230519.xlsx')
+
+mat1_rltp_ls <- list(
+  pancancer_withna = as.data.frame(mat1_corp_withna) %>% rownames_to_column('rtk_prot'),
+  pancancer_fillna = as.data.frame(mat1_corp_withoutna) %>% rownames_to_column('rtk_prot')
+)
+rio::export(mat1_rltp_ls, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_SpearmanCorrelation_pvalue_20230519.xlsx')
+
+
+mat2_rlt_ls <- plyr::dlply(mat2, 'organ', function(mat){
+  mat <- mat[, apply(mat, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+  immune_prots2 <- immune_prots %>% intersect(colnames(mat))
+  rtk_prots2 <- rtk_prots %>% intersect(colnames(mat))
+  mat_cor_withna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'spearman')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+
+  
+  nafill <- min(select(mat, -DIA_ID, -organ), na.rm = T) + log2(0.8)
+  mat[is.na(mat)] <- nafill
+  mat_cor_withoutna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      cor(x1, x2, use = "pairwise.complete.obs", method = 'spearman')
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  return(list(cor_withna = as.data.frame(mat_cor_withna) %>% rownames_to_column('rtk_prot'),
+              cor_fillna = as.data.frame(mat_cor_withoutna) %>% rownames_to_column('rtk_prot')))
+})
+
+names_tmp <- c()
+mat2_rlt_ls_new <- list()
+for(i in seq_along(mat2_rlt_ls)){
+  organ <- names(mat2_rlt_ls)[i]
+  names_tmp[2*i-1] <- str_c(organ, 'withna', sep = '_')
+  names_tmp[2*i] <- str_c(organ, 'fillna', sep = '_')
+  
+  mat2_rlt_ls_new[[2*i-1]] <- mat2_rlt_ls[[i]][[1]]
+  mat2_rlt_ls_new[[2*i]] <- mat2_rlt_ls[[i]][[2]]
+}
+names(mat2_rlt_ls_new) <- names_tmp
+rio::export(mat2_rlt_ls_new, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_SpearmanCorrelation_tissueLevel_20230519.xlsx')
+
+
+
+
+
+
+
+mat2_rltp_ls <- plyr::dlply(mat2, 'organ', function(mat){
+  mat <- mat[, apply(mat, 2, function(x) sum(is.na(x)) / length(x)) < 0.5]
+  immune_prots2 <- immune_prots %>% intersect(colnames(mat))
+  rtk_prots2 <- rtk_prots %>% intersect(colnames(mat))
+  mat_corp_withna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      index_select <- !is.na(x1) & !is.na(x2)
+      x1 <- x1[index_select]
+      x2 <- x2[index_select]
+      options(show.error.messages = FALSE)
+      p <- try(cor.test(x1, x2, method = "spearman", conf.level = 0.95, exact = F)$p.value)
+      if (inherits(p, "try-error")){
+        p <- NaN
+      }
+      options(show.error.messages = TRUE)
+      return(p)
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  
+  
+  nafill <- min(select(mat, -DIA_ID, -organ), na.rm = T) + log2(0.8)
+  mat[is.na(mat)] <- nafill
+  mat_corp_withoutna <- sapply(immune_prots2, function(proti){
+    sapply(rtk_prots2, function(protr){
+      x1 <- mat[, proti]
+      x2 <- mat[, protr]
+      index_select <- !is.na(x1) & !is.na(x2)
+      x1 <- x1[index_select]
+      x2 <- x2[index_select]
+      options(show.error.messages = FALSE)
+      p <- try(cor.test(x1, x2, method = "spearman", conf.level = 0.95, exact = F)$p.value)
+      if (inherits(p, "try-error")){
+        p <- NaN
+      }
+      options(show.error.messages = TRUE)
+      return(p)
+    })
+  }) # one row is an rtk protein; one column is an immune target
+  return(list(cor_withna = as.data.frame(mat_corp_withna) %>% rownames_to_column('rtk_prot'),
+              cor_fillna = as.data.frame(mat_corp_withoutna) %>% rownames_to_column('rtk_prot')
+  ))
+})
+
+names_tmp <- c()
+mat2_rltp_ls_new <- list()
+for(i in seq_along(mat2_rltp_ls)){
+  organ <- names(mat2_rltp_ls)[i]
+  names_tmp[2*i-1] <- str_c(organ, 'withna', sep = '_')
+  names_tmp[2*i] <- str_c(organ, 'fillna', sep = '_')
+  
+  mat2_rltp_ls_new[[2*i-1]] <- mat2_rltp_ls[[i]][[1]]
+  mat2_rltp_ls_new[[2*i]] <- mat2_rltp_ls[[i]][[2]]
+}
+names(mat2_rltp_ls_new) <- names_tmp
+rio::export(mat2_rltp_ls_new, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/rtks/TPHP_C_immuneTarget_rtk_SpearmanCorrelation_pvalue_tissueLevel_20230519.xlsx')
+
+
+```
+
+
+
+
+
+
+
+
+
+

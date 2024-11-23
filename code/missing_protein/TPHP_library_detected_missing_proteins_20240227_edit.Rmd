@@ -1,0 +1,511 @@
+---
+title: "TPHP_library_detected_missing_proteins"
+author: ""
+date: '2022-10-15'
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+
+library(tidyverse)
+library(magrittr)
+library(reticulate)
+source_python('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/TPHP_carcinoma_upregulated_overlapped_drugbank/drugbank_crawl_source.py') # source from python
+
+setwd('//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/missing_proteins/')
+
+```
+
+
+
+# missing proteins 2022-11-28
+```{r}
+# rm(list = ls())
+
+# missing proteins
+df_next <- readxl::read_excel('nextprot-query-NXQ_00204-entries.xls')
+df_under1 <- readxl::read_excel('understudied_proteins_IDG(1).xlsx', sheet = 1) # kinase
+df_under2 <- readxl::read_excel('understudied_proteins_IDG(1).xlsx', sheet = 2) # GPCR
+df_under3 <- readxl::read_excel('understudied_proteins_IDG(1).xlsx', sheet = 3) # ion channel
+
+# add labels
+df_next$label <- 'Missing Protein'
+df_under1$label <- 'Understudied kinase'
+df_under2$label <- 'Understudied GPCR'
+df_under3$label <- 'Understudied ion channel'
+
+
+# merge
+df_next %<>% select(`gene name(s)`, `protein name`, label) %>% setNames(colnames(df_under1))
+df_miss <- rbind(df_next, df_under1, df_under2, df_under3)
+# df_miss %>% count(Gene) %>% filter(n > 1)
+# df_miss %>% filter(Gene == 'ERVK-25')
+
+# combine with downloaded protein information
+df_miss_old <- rio::import('missing_proteins_table.xlsx')
+df_miss_old$`Protein Name` %>% setdiff(df_miss$`Protein Name`)
+df_miss_old %<>% select(-Gene)
+df_miss %<>% left_join(df_miss_old, by = 'Protein Name')
+# df_miss %>% count(UniprotID) %>% filter(n > 1)
+# df_miss %>% filter(UniprotID == 'O60307')
+
+
+
+# use org.Hs.eg.db
+require(org.Hs.eg.db)
+uni_entr <- clusterProfiler::bitr(df_miss$UniprotID,fromType = "UNIPROT",toType = "ENTREZID",OrgDb = "org.Hs.eg.db",drop = T)
+entr_symbol <- BiocGenerics::toTable(org.Hs.egSYMBOL[uni_entr$ENTREZID])
+
+pacman::p_unload(pacman::p_loaded(), character.only = TRUE)
+library(tidyverse)
+library(magrittr)
+library(reticulate)
+
+uni_entr %<>% left_join(entr_symbol, c('ENTREZID' = 'gene_id')) %>%
+  rename(target_genes = symbol,
+         UniprotID = UNIPROT) %>%
+  select(UniprotID, target_genes)
+dup_prots <- uni_entr$UniprotID[base::duplicated(uni_entr$UniprotID)]
+uni_entr1 <- uni_entr[!(uni_entr$UniprotID %in% dup_prots), ]
+uni_entr2 <- uni_entr[uni_entr$UniprotID %in% dup_prots, ]
+uni_entr2 %<>%
+  dplyr::group_by(UniprotID) %>%
+  dplyr::summarise(target_genes = stringr::str_c(target_genes, collapse = ';'))
+uni_entr_c <- rbind(uni_entr1, uni_entr2)
+
+uni_entr # not combined
+uni_entr_c # combined gene name
+
+
+
+df_miss_check <- df_miss %>% left_join(uni_entr, by = 'UniprotID')
+df_miss_check_T <- df_miss_check %>%
+  filter(unlist(Map(identical, df_miss_check$Gene, df_miss_check$target_genes))) # 1181
+df_miss_check_F <- df_miss_check %>%
+  filter(unlist(Map(function(x,y){!identical(x,y)}, df_miss_check$Gene, df_miss_check$target_genes))) # 539
+list(
+  df_miss_check_T = df_miss_check_T,
+  df_miss_check_F = df_miss_check_F
+) %>% rio::export('TPHP_missprot_check.xlsx')
+
+unlist(Map(identical, df_miss_check$Gene, df_miss_check$target_genes))
+
+
+
+# 
+# df_miss_check_T <- readxl::read_excel('TPHP_missprot_check_edited_2.xlsx', sheet = 1)
+# df_miss_check_F <- readxl::read_excel('TPHP_missprot_check_edited_2.xlsx', sheet = 2)
+df_miss_checked <- rio::import('TPHP_missprot_check_edited.tsv')
+df_miss_checked %>% filter(UniprotID == '-')
+
+df_miss_checked %<>%
+  select(-target_genes) %>%
+  distinct() %>%
+  filter(UniprotID != '-')
+
+df_miss_checked %>% distinct(UniprotID, label) %>% dim() # 1669    2
+df_miss_checked %>% distinct(UniprotID, label, Gene) %>% dim() # 1669    3
+df_miss_checked %>% pull(UniprotID) %>% unique() %>% length # 1640
+df_multi_mistype <- df_miss_checked %>% count(UniprotID) %>% filter(n > 1) %>% semi_join(df_miss_check, ., by = 'UniprotID') %>% arrange(UniprotID)
+df_multi_mistype %>% nrow() # 58 5
+
+length(unique(df_multi_mistype$UniprotID)) # 29
+df_multi_mistype %>% select(-target_genes) %>% rio::export('missing_protein_multiType.xlsx')
+
+
+# 
+multitype_prot <- unique(df_multi_mistype$UniprotID) #  UniprotID  nextprot  missing protein
+nrow(df_miss_checked) # 1669
+df_miss1 <- df_miss_checked %>% filter(!(UniprotID %in% multitype_prot))
+df_miss2 <- df_miss_checked %>% filter(UniprotID %in% multitype_prot, label == 'Missing Protein')
+df_miss <- rbind(df_miss1, df_miss2)
+nrow(df_miss) # 1640
+rio::export(df_miss, '//172.16.13.136/share/members/jiangwenhao/TPHP/20220908/missing_proteins/missing_understudied_proteins.xlsx')
+
+
+# libraries
+files_lib <- list.files('//172.16.13.136/TPHP/TPL/libs/rlt_all/', pattern = 'library\\.tsv', full.names = T, recursive = T)
+files_prot <- files_lib %>% str_remove('\\library\\.tsv') %>% str_remove('output/$') %>% str_c('protein.tsv')
+filenames <- files_prot %>%
+  str_extract('/rlt_all/\\w+?/') %>%
+  str_remove_all('^/rlt_all/|/$')
+ms_types <- ifelse(str_starts(filenames, 'MP'), 'FAIMS', 'TIMS')
+
+# #  libraries
+# old_lib <- c('bloodlib_B7_v2', 'BTL', 'nail', 'saliva', 'UMC')
+# rm_indice <- which(filenames %in% old_lib)
+# files_prot %<>% .[-rm_indice]
+# filenames %<>% .[-rm_indice]
+# ms_types %<>% .[-rm_indice]
+
+# #  libraries 
+# filenames %<>% str_replace('_v2$', '') # remove "v2" suffix
+# filenames[filenames == 'CA_kid'] <- 'CA_kidney' # complete tissue name to match abbr. table
+# filenames[filenames == 'CA_PAN'] <- 'CA_pancreas'
+
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+filenames <- sapply(filenames, function(x) {
+  x %>%
+    str_split('_') %>%
+    .[[1]] %>%
+    sapply(function(e){
+      ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+    }) %>%
+    str_c(collapse = '_')
+})
+data.frame(
+  prot_name = files_prot,
+  lib_name = files_lib,
+  name = filenames,
+  MS_type = ms_types
+) %>% rio::export('misprot_liblist_v2.xlsx')
+
+
+# 
+# organ_clas<-gsub("BIL|BLL|BFL|BOL|BTL|BPL|HBM|PIG","Cerebral cortex",organ_clas)
+# organ_clas<-gsub("EMBN|EMBZ|EMBW","Fetal",organ_clas)
+# organ_clas<-gsub("WB|WBC|RBC|platelet|plasma|blood|bloodlib","Blood",organ_clas)
+rm_indice <- str_which(files_prot, 'BIL|BLL|BFL|BOL|BTL|BPL|PIG|WB|WBC|RBC|platelet|plasma|fluid')
+files_lib %<>% .[-rm_indice]
+files_prot %<>% .[-rm_indice]
+filenames %<>% .[-rm_indice]
+ms_types %<>% .[-rm_indice]
+
+
+#  #unique peptides >= 2 (in library.tsv) indistinguished  unique proteins
+misprot_ls <- lapply(seq_along(files_prot), function(i){
+  df <- read.delim(files_prot[i], check.names = F)
+  dflib <- read.delim(files_lib[i], check.names = F)
+  df %<>% filter(`Indistinguishable Proteins` == '') # Unique Proteins;
+  dflib %<>% distinct(ProteinId, PeptideSequence) %>%
+    filter(ProteinId %in% df$`Protein ID`) %>% # select proteins only distinguished
+    count(ProteinId, name = 'n_unique_peptide') %>%
+    filter(n_unique_peptide >= 2) %>% # select proteins with >=2 peptides
+    semi_join(dflib, .)
+  prot_pepmt2 <- dflib %>% distinct(ProteinId, PeptideSequence)
+  prot_pepmt2 <- plyr::ddply(prot_pepmt2, 'ProteinId', function(dfsub){
+    proothers <- prot_pepmt2 %>% filter(ProteinId != dfsub$ProteinId[1])
+    dfsub <- dfsub %>% filter(!(PeptideSequence %in% proothers$PeptideSequence))
+    dfsub %>% count(ProteinId, name = 'n_unique_peptide')
+  }) %>% filter(n_unique_peptide >= 2)
+  prot <- prot_pepmt2$ProteinId
+  df_tmp <- df_miss %>%
+    filter(UniprotID %in% prot) %>%
+    mutate(`MS Type` = all_of(ms_types[i])) %>% 
+    left_join(prot_pepmt2 %>% rename(UniprotID = ProteinId))
+  return(df_tmp)
+})
+names(misprot_ls) <- filenames
+df_missprot <- plyr::ldply(misprot_ls, .id = 'Organ')
+rio::export(df_missprot, 'TPHP_library_detected_unique_missing_proteins_v2.1.xlsx')
+
+df_miss
+
+
+# 
+# # unique proteins
+# df_stat_separate <- df_missprot %>%
+#   distinct(UniprotID, Organ, `MS Type`, label) %>%
+#   count(Organ, `MS Type`, label) %>%
+#   pivot_wider(id_cols = c('Organ', 'MS Type'), names_from = 'label', values_from = 'n', values_fill = 0) %>%
+#   arrange(across(-(1:2)))
+# 
+# df_stat_combine1 <- df_missprot %>%
+#   distinct(UniprotID, `MS Type`, label) %>%
+#   count(`MS Type`, label) %>%
+#   pivot_wider(id_cols = c('MS Type'), names_from = 'label', values_from = 'n', values_fill = 0)
+# 
+# df_stat_combine2 <- df_missprot %>%
+#   distinct(UniprotID, label) %>%
+#   count(label) %>%
+#   pivot_wider(names_from = 'label', values_from = 'n', values_fill = 0) %>%
+#   add_column(`MS Type` = 'All', .before = 1)
+# 
+# df_stat_combine <- rbind(df_stat_combine1, df_stat_combine2) %>%
+#   arrange(across(-(1:2)))
+# uni_prot_stat <- list(unique_stat_separate = df_stat_separate,
+#                       unique_stat_combine = df_stat_combine)
+# 
+# 
+# # protein groups
+# mispg_ls <- lapply(seq_along(files_prot), function(i){
+#   df <- read.delim(files_prot[i], check.names = F)
+#   prot1 <- df$`Protein ID`
+#   prot2 <- df$`Indistinguishable Proteins`[df$`Indistinguishable Proteins` != ''] %>%
+#     sapply(function(x) str_split(x, '\\|')[[1]][2]) %>% unname()
+#   prot <- union(prot1, prot2)
+#   df_tmp <- df_miss %>%
+#     filter(UniprotID %in% prot) %>%
+#     mutate(`MS Type` = all_of(ms_types[i]))
+#   return(df_tmp)
+# })
+# names(mispg_ls) <- filenames
+# df_misspg <- plyr::ldply(mispg_ls, .id = 'Organ')
+# 
+# 
+# df_stat_separate <- df_misspg %>%
+#   distinct(UniprotID, Organ, `MS Type`, label) %>%
+#   count(Organ, `MS Type`, label) %>%
+#   pivot_wider(id_cols = c('Organ', 'MS Type'), names_from = 'label', values_from = 'n', values_fill = 0) %>%
+#   arrange(across(-(1:2)))
+# 
+# df_stat_combine1 <- df_misspg %>%
+#   distinct(UniprotID, `MS Type`, label) %>%
+#   count(`MS Type`, label) %>%
+#   pivot_wider(id_cols = c('MS Type'), names_from = 'label', values_from = 'n', values_fill = 0)
+# 
+# df_stat_combine2 <- df_misspg %>%
+#   distinct(UniprotID, label) %>%
+#   count(label) %>%
+#   pivot_wider(names_from = 'label', values_from = 'n', values_fill = 0) %>%
+#   add_column(`MS Type` = 'All', .before = 1)
+# 
+# df_stat_combine <- rbind(df_stat_combine1, df_stat_combine2) %>%
+#   arrange(across(-(1:2)))
+# pg_stat <- list(pg_stat_separate = df_stat_separate,
+#                 pg_stat_combine = df_stat_combine)
+# stat_ls <- c(uni_prot_stat, pg_stat)
+# 
+# miss_ls <- list(unique_protein = df_missprot,
+#                 protein_group = df_misspg)
+# 
+# 
+# rio::export(miss_ls, 'TPHP_library_detected_missing_proteins_65sub_1swiss_2isoform_5FAIMS_20230203.xlsx')
+# rio::export(stat_ls, 'TPHP_library_detected_missing_proteins_stat_65sub_1swiss_2isoform_5FAIMS_20230203.xlsx')
+
+
+
+```
+
+
+
+
+# stat protein and pg number in libraries
+```{r}
+# protn_ls <- lapply(seq_along(files_prot), function(i){
+#   df <- read.delim(files_prot[i], check.names = F)
+#   prot1 <- df$`Protein ID`
+#   prot2 <- df$`Indistinguishable Proteins`[df$`Indistinguishable Proteins` != ''] %>%
+#     sapply(function(x) str_split(x, '\\|')[[1]][2]) %>% unname()
+#   prot <- union(prot1, prot2)
+# 
+#   protein_n <- length(prot)
+#   protein_group_n <- nrow(df)
+#   unique_protein_n <- df %>%
+#     filter(`Indistinguishable Proteins` == '') %>%
+#     nrow()
+#   unique_protein_over1_unique_peptides_n <-
+#     df %>%
+#     filter(df %>% pull(all_of(str_subset(colnames(df), 'Unique Peptide'))) >= 2,
+#            `Indistinguishable Proteins` == '') %>%
+#     nrow()
+#   df_rlt <- data.frame(
+#     protein = protein_n,
+#     protein_group = protein_group_n,
+#     unique_protein = unique_protein_n,
+#     unique_proetin_with_over1_unique_peptides = unique_protein_over1_unique_peptides_n
+#   )
+#   return(df_rlt)
+# })
+# names(protn_ls) <- filenames
+# df_protn <- plyr::ldply(protn_ls, .id = 'Organ') %>%
+#   arrange(across(-1))
+# 
+# 
+# 
+# 
+# # all results
+# protn_ls <- lapply(seq_along(files_prot), function(i){
+#   df <- read.delim(files_prot[i], check.names = F)
+#   prot1 <- df$`Protein ID`
+#   prot2 <- df$`Indistinguishable Proteins`[df$`Indistinguishable Proteins` != ''] %>%
+#     sapply(function(x) str_split(x, '\\|')[[1]][2]) %>% unname()
+#   prot <- union(prot1, prot2)
+# 
+#   rlt_ls <- list(
+#     protein = prot,
+#     protein_group = df$`Protein ID`,
+#     unique_protein = df %>% filter(`Indistinguishable Proteins` == '') %>% pull(`Protein ID`),
+#     unique_proetin_with_over1_unique_peptides = df %>% filter(df %>% pull(all_of(str_subset(colnames(df), 'Unique Peptide'))) >= 2,
+#            `Indistinguishable Proteins` == '') %>% pull(`Protein ID`)
+#   )
+#   return(rlt_ls)
+# })
+# names(protn_ls) <- filenames
+# 
+# protein_n <- Map(function(lt) lt[[1]], protn_ls) %>% unlist() %>% unique() %>% length()
+# protein_group_n <- Map(function(lt) lt[[2]], protn_ls) %>% unlist() %>% unique() %>% length()
+# unique_protein_n <- Map(function(lt) lt[[3]], protn_ls) %>% unlist() %>% unique() %>% length()
+# unique_protein_over1_unique_peptides_n <- Map(function(lt) lt[[4]], protn_ls) %>% unlist() %>% unique() %>% length()
+# df_protn_union <- data.frame(
+#   protein = protein_n,
+#   protein_group = protein_group_n,
+#   unique_protein = unique_protein_n,
+#   unique_proetin_with_over1_unique_peptides = unique_protein_over1_unique_peptides_n
+# )
+# 
+# 
+# 
+# # all results without isoform
+# protn_ls_rmisoform <- protn_ls
+# protn_ls_rmisoform$TPHPlib_frag803_200Kisoform <- NULL
+# protn_ls_rmisoform$TPHPlib_fragCA225_200Kisoform <- NULL
+# 
+# protein_n <- Map(function(lt) lt[[1]], protn_ls_rmisoform) %>% unlist() %>% unique() %>% length()
+# protein_group_n <- Map(function(lt) lt[[2]], protn_ls_rmisoform) %>% unlist() %>% unique() %>% length()
+# unique_protein_n <- Map(function(lt) lt[[3]], protn_ls_rmisoform) %>% unlist() %>% unique() %>% length()
+# unique_protein_over1_unique_peptides_n <- Map(function(lt) lt[[4]], protn_ls_rmisoform) %>% unlist() %>% unique() %>% length()
+# df_protn_union_rmisoform <- data.frame(
+#   protein = protein_n,
+#   protein_group = protein_group_n,
+#   unique_protein = unique_protein_n,
+#   unique_proetin_with_over1_unique_peptides = unique_protein_over1_unique_peptides_n
+# )
+# 
+# # combine results
+# df_protn_union_rmisoform %<>% add_column(Organ = 'ALL Expect isoform', .before = 1)
+# df_protn_union %<>% add_column(Organ = 'ALL', .before = 1)
+# df_protn %<>% rbind(df_protn_union_rmisoform, df_protn_union)
+# 
+# 
+# rio::export(df_protn, 'TPHP_library_protein_identification_65sub_1swiss_2isoform_5FAIMS_20230203.xlsx')
+
+
+```
+
+# stat
+```{r}
+# # unique protein
+# prot_ls <- lapply(seq_along(files_prot), function(i){
+#   df <- read.delim(files_prot[i], check.names = F)
+#   df %<>% filter(df %>% pull(all_of(str_subset(colnames(df), 'Unique Peptide'))) >= 2,
+#                  `Indistinguishable Proteins` == '') # Unique Peptides; Unique Peptide Ions
+#   df_prot <- df %>% select(`Protein ID`)
+#   return(df_prot)
+# })
+# names(prot_ls) <- filenames
+# df_prot <- plyr::ldply(prot_ls, .id = 'Organ')
+# 
+# 
+# 
+# df_prot %>%
+#   filter(!str_detect(Organ, '200Kisoform')) %>%
+#   pull(`Protein ID`) %>%
+#   unique() %>% length()
+# 
+# df_prot %>% count(Organ)
+# df_prot %>% filter(Organ %in% c('BFL', 'BTL', 'BTL_v2', 'BLL', 'BIL', 'BOL', 'BCB', 'HIP')) %>%
+#   pull(`Protein ID`) %>%
+#   unique() %>% length()
+# 
+# 
+# 
+# 
+# 
+# 
+# # protein group
+# pg_ls <- lapply(seq_along(files_prot), function(i){
+#   df <- read.delim(files_prot[i], check.names = F)
+#   prot1 <- df$`Protein ID`
+#   prot2 <- df$`Indistinguishable Proteins`[df$`Indistinguishable Proteins` != ''] %>%
+#     sapply(function(x) str_split(x, '\\|')[[1]][2]) %>% unname()
+#   prot <- union(prot1, prot2)
+#   df_prot <- data.frame(`Protein ID` = prot, check.names = F)
+#   return(df_prot)
+# })
+# names(pg_ls) <- filenames
+# df_pg <- plyr::ldply(pg_ls, .id = 'Organ')
+
+```
+
+
+# read all psm.tsv
+```{r}
+# psm files
+files_psm <- list.files('//172.16.13.136/TPHP/TPL/libs/rlt_all/', pattern = 'psm\\.tsv', full.names = T, recursive = T)
+filenames <- files_psm %>%
+  str_extract('/rlt_all/\\w+?/') %>%
+  str_remove_all('^/rlt_all/|/$')
+
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+h <- hash::hash(keys = df_abbr$'Entire', values = df_abbr$'Abbr')
+filenames <- sapply(filenames, function(x) {
+  x %>%
+    str_split('_') %>%
+    .[[1]] %>%
+    sapply(function(e){
+      ifelse(!is.null(h[[tolower(e)]]), h[[tolower(e)]], e)
+    }) %>%
+    str_c(collapse = '_')
+})
+
+# 
+# organ_clas<-gsub("BIL|BLL|BFL|BOL|BTL|BPL|HBM|PIG","Cerebral cortex",organ_clas)
+# organ_clas<-gsub("EMBN|EMBZ|EMBW","Fetal",organ_clas)
+# organ_clas<-gsub("WB|WBC|RBC|platelet|plasma|blood|bloodlib","Blood",organ_clas)
+rm_indice <- str_which(files_psm, 'BIL|BLL|BFL|BOL|BTL|BPL|PIG|WB|WBC|RBC|platelet|plasma|fluid')
+files_psm %<>% .[-rm_indice]
+filenames %<>% .[-rm_indice]
+
+ret <- data.frame(
+  psm_name = files_psm,
+  name = filenames
+)
+rio::export(ret, 'misprot_psmlist_v2.xlsx')
+
+
+
+
+
+```
+
+## on Guomics3
+```{r}
+ret$psm_name %<>% str_replace('^//172.16.13.136', '//192.168.99.100')
+
+psm_ls <- list()
+for(i in seq_along(ret$psm_name)){
+  cat(i, '...\r')
+  x <- ret$psm_name[i]
+  psm_ls[[i]] <- rio::import(x)
+}
+names(psm_ls) <- ret$name
+
+dfpsm <- plyr::ldply(psm_ls, .id = 'LibName')
+
+# missing pep list
+pep <- rio::import('missing_pep/missing_pep_list_.csv')
+pep$Peptide <- str_remove_all(pep$ModifiedPeptide, '\\[.+?\\]')
+
+# libpsm <- data.table::fread('//192.168.99.100/TPHP/TPL/libs/20220616_fraglib/psm.tsv', sep = '\t')
+
+
+# x <- pep$ModifiedPeptide
+# y <- unique(dfpsm$`Modified Peptide`)
+# setdiff(x, y)
+
+setdiff(pep$Peptide, unique(dfpsm$Peptide)) # character(0)
+setdiff(pep$Peptide, unique(dfpsm$Peptide[dfpsm$LibName == 'TPHP_swissprot'])) # character(0)
+
+rlt <- dfpsm %>% filter(LibName == 'TPHP_swissprot', Peptide %in% pep$Peptide)
+rlt %>% left_join(pep) %>% rio::export('missing_pep/missing_pep_list_map_psm.csv')
+
+
+rltall <- dfpsm %>% filter(Peptide %in% pep$Peptide)
+rltall %>% left_join(pep) %>% rio::export('missing_pep/missing_pep_list_map_psm_all.csv')
+
+
+```
+
+
+
+
+```{r}
+#save.image('.RData')
+# load('.RData')
+```
+
