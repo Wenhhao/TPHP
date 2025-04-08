@@ -1,5 +1,6 @@
 rstudioapi::getActiveDocumentContext()$path
 setwd('~/GitHub/TPHP/code/Compare_with_entrapment_lib/')
+source('../../source/my_fun.R')
 library(tidyverse)
 library(magrittr)
 library(RColorBrewer)
@@ -9,6 +10,11 @@ library(pheatmap)
 TPHP_HOME <- '//172.16.13.136/TPHP/'
 
 target_decoy_color <- ggsci::pal_d3()(2) %>% setNames(c('Target', 'Decoy'))
+library_color <- ggsci::pal_d3()(2) %>% setNames(c('TPHP', 'Entrapment'))
+cancer_color <- ggsci::pal_nejm()(5) %>% setNames(c('C_pool', 'N_pool', 'Normal', 'adjacent', 'carcinoma'))
+df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+tissue_color <- str_c('#', df_color$color[1:51]) %>% setNames(df_color$tissue[1:51])
+tissue_color %<>% append(c('FO' = '#23087C'))
 
 format_custom <- function(x, cutoff = 0.01) {
   format_custom_individual <- function(x, cutoff = 0.01){
@@ -71,13 +77,17 @@ my_cor_smooth <- function(df, col1, col2, cor_method = "pearson", ggpmisc_label 
 
 # 1.Data readin ------
 libpep <- rio::import(file.path(TPHP_HOME, 'TPL/libs/rlt_all/TPHP_swissprot/peptide.tsv'))
-tphp_pg <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/tphp_swiss_lib/report.pg_matrix.tsv')
-entra_pg <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/entrapment_lib/report.pg_matrix.tsv')
-tphp_pr <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/tphp_swiss_lib/report.pr_matrix.tsv')
-entra_pr <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/entrapment_lib/report.pr_matrix.tsv')
+tphp_pg <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/tphp_swiss_lib/report.pg_matrix.tsv') %>% setNames(., str_remove(names(.), '.+\\\\'))
+entra_pg <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/entrapment_lib/report.pg_matrix.tsv') %>% setNames(., str_remove(names(.), '.+\\\\'))
+tphp_pr <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/tphp_swiss_lib/report.pr_matrix.tsv') %>% setNames(., str_remove(names(.), '.+\\\\'))
+entra_pr <- rio::import('//172.16.13.136/TPHP/results/swisslib_entraplib_compare/entrapment_lib/report.pr_matrix.tsv') %>% setNames(., str_remove(names(.), '.+\\\\'))
 
-df_info <- readxl::read_excel('../../input/20220706TPHP_1781file_117pool_info_onlyfilename-id_pm_swissprot1025.xlsx', col_types = c(rep('guess', 21), rep('numeric', 13479)))
-df_info %<>% select(1:21)
+df_info <- readxl::read_excel('../../input/20220708TPHP_1781file_info_edited_v3_2.xlsx') %>% as.data.frame()
+# df_info %<>% mutate(ID = sapply(FileName, function(x){
+#   str_extract(x, '^(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
+#     str_c(collapse = '_')
+# }), .before = 1)
+
 
 # 2.For entrapmant pg report -------
 # a posteriori FDR
@@ -267,12 +277,12 @@ ggsave('TPHP_entrap_precursor_Linear_correlation.pdf',
 # correlation matrix
 X_pg1 <- tphp_pg
 colnames(X_pg1)[-(1:4)] %<>% sapply(function(x){
-  str_extract(x, '\\\\(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
+  str_extract(x, '^(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
     str_c(collapse = '_') %>% str_c('.tphp')
 })
 X_pg2 <- entra_pg
 colnames(X_pg2)[-(1:4)] %<>% sapply(function(x){
-  str_extract(x, '\\\\(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
+  str_extract(x, '^(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
     str_c(collapse = '_') %>% str_c('.entrap')
 })
 X_pg <- X_pg1 %>% inner_join(X_pg2) %>% 
@@ -280,9 +290,19 @@ X_pg <- X_pg1 %>% inner_join(X_pg2) %>%
   select(-(Protein.Names:First.Protein.Description)) %>% 
   as.matrix()
 cor_pg <- X_pg %>% cor(use = 'pairwise.complete.obs', method = 'spearman')
-ann <- data.frame(row.names = c(colnames(X_pg1)[-(1:4)], colnames(X_pg2)[-(1:4)]),
+ann <- data.frame(FileName = c(colnames(tphp_pg)[-(1:4)], colnames(entra_pg)[-(1:4)]),
+                  ID = c(colnames(X_pg1)[-(1:4)], colnames(X_pg2)[-(1:4)]),
                   Library = c(rep('TPHP', ncol(X_pg1)-4),
-                              rep('Entrapment', ncol(X_pg2)-4)))
+                              rep('Entrapment', ncol(X_pg2)-4))) %>% 
+  inner_join(df_info %>% select(FileName, cancer_type, tissue_type, DDA_lib_type), .) %>% 
+  column_to_rownames('ID') %>% 
+  select(-FileName)
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+ann_abbr <- get_abbr(ann, 'DDA_lib_type', df_abbr = df_abbr) %>% 
+  select(DDA_lib_type, cancer_type, Library)
+
+ann_clr <- list(Library = library_color, cancer_type = cancer_color, DDA_lib_type = tissue_color)
+
 cor_color <- colorRampPalette(brewer.pal(11, 'PuOr')[c(11:8, 4:1)])(50)
 cor_bk <- unique(c(seq(0.4, 1, length=50)))
 pheatmap(
@@ -291,12 +311,14 @@ pheatmap(
   clustering_distance_cols = 'euclidean',
   clustering_distance_rows = 'euclidean',
   clustering_method = 'ward.D2',
-  annotation_col = ann,
-  annotation_row = ann,
+  annotation_col = ann_abbr,
+  annotation_row = ann_abbr,
+  annotation_colors = ann_clr,
   color = cor_color, breaks = cor_bk,
   show_colnames = F, show_rownames = F,
+  fontsize = 8,
   main = 'Spearman correlation - proteins',
-  width = 10, height = 10,
+  width = 8, height = 6,
   filename = 'TPHP_entrap_proteinGroup_spearman_matrix.pdf'
 )
 
@@ -305,5 +327,50 @@ pheatmap(
 
 
 
+X_pr1 <- tphp_pr
+colnames(X_pr1)[-(1:10)] %<>% sapply(function(x){
+  str_extract(x, '^(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
+    str_c(collapse = '_') %>% str_c('.tphp')
+})
+X_pr2 <- entra_pr
+colnames(X_pr2)[-(1:10)] %<>% sapply(function(x){
+  str_extract(x, '^(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>%
+    str_c(collapse = '_') %>% str_c('.entrap')
+})
+X_pr <- X_pr1 %>% inner_join(X_pr2) %>% 
+  column_to_rownames('Precursor.Id') %>% 
+  select(-(Protein.Group:Precursor.Charge)) %>% 
+  as.matrix()
+cor_pr <- X_pr %>% cor(use = 'pairwise.complete.obs', method = 'spearman')
+ann <- data.frame(FileName = c(colnames(tphp_pr)[-(1:10)], colnames(entra_pr)[-(1:10)]),
+                  ID = c(colnames(X_pr1)[-(1:10)], colnames(X_pr2)[-(1:10)]),
+                  Library = c(rep('TPHP', ncol(X_pr1)-10),
+                              rep('Entrapment', ncol(X_pr2)-10))) %>% 
+  inner_join(df_info %>% select(FileName, cancer_type, tissue_type, DDA_lib_type), .) %>% 
+  column_to_rownames('ID') %>% 
+  select(-FileName)
+df_abbr <- read.delim('//172.16.13.136/share/members/jiangwenhao/TPHP/input/sample_types_abbr_20230113.txt', stringsAsFactors = F, check.names = F, na.strings = '')
+ann_abbr <- get_abbr(ann, 'DDA_lib_type', df_abbr = df_abbr) %>% 
+  select(DDA_lib_type, cancer_type, Library)
 
+ann_clr <- list(Library = library_color, cancer_type = cancer_color, DDA_lib_type = tissue_color)
+
+cor_color <- colorRampPalette(brewer.pal(11, 'PuOr')[c(11:8, 4:1)])(50)
+cor_bk <- unique(c(seq(0.3, 1, length=50)))
+pheatmap(
+  cor_pr, scale = 'none',
+  cluster_cols = T, cluster_rows = T,
+  clustering_distance_cols = 'euclidean',
+  clustering_distance_rows = 'euclidean',
+  clustering_method = 'ward.D2',
+  annotation_col = ann_abbr,
+  annotation_row = ann_abbr,
+  annotation_colors = ann_clr,
+  color = cor_color, breaks = cor_bk,
+  show_colnames = F, show_rownames = F,
+  fontsize = 8,
+  main = 'Spearman correlation - precursors',
+  width = 8, height = 6,
+  filename = 'TPHP_entrap_precursor_spearman_matrix.pdf'
+)
 
