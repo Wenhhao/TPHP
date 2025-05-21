@@ -1,2 +1,6 @@
 *.Rhistory
 code/Compare_with_entrapment_lib/entrapment_lib.tsv
+code/Compare_with_entrapment_lib/cor_pg.RData
+code/Compare_with_entrapment_lib/old/TPHP_entrap_precursor_Linear_correlation.pdf
+code/Compare_with_entrapment_lib/TPHP_entrap_proteinGroup_Linear_correlation.pdf
+code/Compare_with_entrapment_lib/TPHP_entrap_proteinGroup_Linear_correlation.pdf
