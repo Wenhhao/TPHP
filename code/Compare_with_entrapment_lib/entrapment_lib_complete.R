@@ -342,6 +342,44 @@ graphics.off()
 # 
 load('lm_pgpr.RData')
 
+
+
+# check the low R^2 samples (< 0.5)
+low_cor_runs <- lm_pg %>% filter(R_squared < 0.5) %>% pull(name)
+plot_cor_pg_low <- pglong %>%
+  filter(name %in% low_cor_runs) %>% 
+  plyr::dlply('name', function(dfsub){
+    cat(dfsub$name[1], '\r')
+    my_cor_smooth(dfsub, 'TPHP', 'Entrapment', ggpmisc_label = c('eq', 'R2'),
+                  plot_title = str_extract(dfsub$name[1], '\\\\(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>% str_c(collapse = '_'))
+  })
+pdf('TPHP_entrap_proteinGroup_Linear_correlation_low_R2.pdf', width = 8, height = 6)
+for(i in seq_along(plot_cor_pg_low)){
+  cat(i, '\r')
+  print(plot_cor_pg_low[[i]])
+}
+graphics.off()
+
+# after log2-transformed
+plot_cor_pg_low <- pglong %>%
+  filter(name %in% low_cor_runs) %>% 
+  mutate(TPHP = log2(TPHP), Entrapment = log2(Entrapment)) %>% 
+  plyr::dlply('name', function(dfsub){
+    cat(dfsub$name[1], '\r')
+    my_cor_smooth(dfsub, 'TPHP', 'Entrapment', ggpmisc_label = c('eq', 'R2'),
+                  plot_title = str_extract(dfsub$name[1], '\\\\(\\w+?)\\d+.+_(\\d+)\\.d$', group = c(1, 2)) %>% str_c(collapse = '_'))
+  })
+pdf('TPHP_entrap_proteinGroup_Linear_correlation_low_R2_afterLog2.pdf', width = 8, height = 6)
+for(i in seq_along(plot_cor_pg_low)){
+  cat(i, '\r')
+  print(plot_cor_pg_low[[i]])
+}
+graphics.off()
+
+
+
+
+
 # output
 volcano_lm_pg <- lm_pg %>% 
   mutate(`-Log10.adj.p` = ifelse(adj_p_value == 0, 1e-300, adj_p_value),
