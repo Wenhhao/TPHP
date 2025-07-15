@@ -137,6 +137,16 @@ runSpecific.pg.FDP.combined <- tphp %>% plyr::ddply('Run', function(dfsub){
   )
 }) %>% arrange(desc(runSpecific.pg.FDP.combined))
 
+# identity
+df_identity <- tphp %>% plyr::ddply('Run', function(dfsub){
+    npg <- dfsub %>%
+      distinct(Protein.Group, Is.pg.Target) %>%
+      nrow()
+    npr <- dfsub %>%
+      distinct(Precursor.Id, Is.pr.Target) %>%
+      nrow()
+    data.frame(`# precursors` = npr, `# protein groups` = npg, check.names = F)
+})
 
 tbl2 <- data.frame(
   global.pr.FDP.combined = global.pr.FDP.combined,
@@ -166,13 +176,15 @@ bad_runs <- runSpecific.pr.FDP.combined %>%
 bad_runs_info <- df_info %>%
   filter(str_detect(FileName, str_c(bad_runs, collapse = '|')))
 
-
-
+tbl3 <- df_identity %>%
+  inner_join(runSpecific.pr.FDP.combined) %>% 
+  inner_join(runSpecific.pg.FDP.combined)
 
 # OUTPUT -------
 list(r.values = tbl1,
      global.FDP = tbl2,
-     run.specific.pr.FDP = runSpecific.pr.FDP.combined,
-     run.specific.pg.FDP = runSpecific.pg.FDP.combined,
+     # run.specific.pr.FDP = runSpecific.pr.FDP.combined,
+     # run.specific.pg.FDP = runSpecific.pg.FDP.combined,
+     identity = tbl3,
      bad.runs = bad_runs_info) %>% 
   rio::export('source_data.xlsx')
