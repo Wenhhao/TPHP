@@ -1,7 +1,8 @@
+# On G3
 # Reference: https://doi.org/10.1038/s41592-025-02719-x
 ##  FDP.combined <- N.ε * (1 + 1/r) / (N.τ + N.ε)
-rstudioapi::getActiveDocumentContext()$path
-setwd('~/GitHub/TPHP/code/Compare_with_entrapment_lib/')
+# rstudioapi::getActiveDocumentContext()$path
+# setwd('~/GitHub/TPHP/code/Compare_with_entrapment_lib/')
 source('../../source/my_fun.R')
 library(tidyverse)
 library(magrittr)
@@ -10,12 +11,12 @@ library(pheatmap)
 library(broom)
 
 
-TPHP_HOME <- '//172.16.13.136/TPHP/'
+TPHP_HOME <- '//192.168.99.100/TPHP/'
 # 
 # target_decoy_color <- ggsci::pal_d3()(2) %>% setNames(c('Target', 'Decoy'))
 # library_color <- ggsci::pal_d3()(2) %>% setNames(c('TPHP', 'Entrapment'))
 # cancer_color <- ggsci::pal_nejm()(5) %>% setNames(c('C_pool', 'N_pool', 'Normal', 'adjacent', 'carcinoma'))
-# df_color <- rio::import('//172.16.13.136/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
+# df_color <- rio::import('//192.168.99.100/share/members/jiangwenhao/TPHP/input/PUH_tissue_colorset_20230210.xlsx')
 # tissue_color <- str_c('#', df_color$color[1:51]) %>% setNames(df_color$tissue[1:51])
 # tissue_color %<>% append(c('FO' = '#23087C'))
 # 
@@ -67,8 +68,8 @@ fdp_est <- function(N.τ, N.ε, r) {
 
 
 # # 0.Entrapment library prepare ----------
-lib_tphp <- rio::import('//172.16.13.136/TPHP/library/TPHPlib_frag1025_swissprot_final.tsv')
-lib_entrap <- rio::import('//172.16.13.136/share/members/jiangwenhao/20250401_GNHSF_lib_tims90minIGC_88/IGC_humanswiss_irt_contam_88_ddafile_NEW_rmone_20220102.tsv') %>%
+lib_tphp <- rio::import('//192.168.99.100/TPHP/library/TPHPlib_frag1025_swissprot_final.tsv')
+lib_entrap <- rio::import('//192.168.99.100/share/members/jiangwenhao/20250401_GNHSF_lib_tims90minIGC_88/IGC_humanswiss_irt_contam_88_ddafile_NEW_rmone_20220102.tsv') %>%
   filter(!(PeptideSequence %in% lib_tphp$PeptideSequence)) %>% 
   mutate(AverageExperimentalRetentionTime = NA)
 # setdiff(names(lib_tphp), names(lib_entrap)) # AverageExperimentalRetentionTime
@@ -171,16 +172,32 @@ p_runFDP <- ggplot(dfbox) +
   theme(text = element_text(size = 12))
 ggsave('entrapment_estimate_combined_runspecific.pdf', p_runFDP, width = 5, height = 4)
 
-
-bad_runs <- runSpecific.pr.FDP.combined %>%
-  filter(runSpecific.pr.FDP.combined > 0.01) %>% 
-  pull(Run)
-bad_runs_info <- df_info %>%
-  filter(str_detect(FileName, str_c(bad_runs, collapse = '|')))
-
 tbl3 <- df_identity %>%
   inner_join(runSpecific.pr.FDP.combined) %>% 
   inner_join(runSpecific.pg.FDP.combined)
+
+
+bad_runs_pr <- runSpecific.pr.FDP.combined %>%
+  filter(runSpecific.pr.FDP.combined > 0.01) %>% 
+  pull(Run)
+bad_runs_pg <- runSpecific.pg.FDP.combined %>%
+  filter(runSpecific.pg.FDP.combined > 0.01) %>% 
+  pull(Run)
+bad_runs <- union(bad_runs_pr, bad_runs_pg)
+bad_runs_info <- df_info %>%
+  filter(str_detect(FileName, str_c(bad_runs, collapse = '|'))) %>% 
+  mutate(Run = str_remove(FileName, '\\.d$')) %>% 
+  inner_join(tbl3) %>% 
+  arrange(desc(runSpecific.pr.FDP.combined)) %>% 
+  mutate(pr.false = round(runSpecific.pr.FDP.combined * `# precursors`, 0),
+         pr.true = `# precursors` - pr.false,
+         pg.false = round(runSpecific.pg.FDP.combined * `# protein groups`, 0),
+         pg.true = `# protein groups` - pg.false)
+
+run_pg_false <- tphp %>% filter(!Is.pg.Target) %>%
+  distinct(Run, Protein.Group) %>% 
+  arrange(Protein.Group)
+pg_false <- run_pg_false %>% distinct(Protein.Group)
 
 # OUTPUT -------
 list(r.values = tbl1,
@@ -188,5 +205,7 @@ list(r.values = tbl1,
      # run.specific.pr.FDP = runSpecific.pr.FDP.combined,
      # run.specific.pg.FDP = runSpecific.pg.FDP.combined,
      identity = tbl3,
-     bad.runs = bad_runs_info) %>% 
+     bad.runs = bad_runs_info,
+     run.pg.false = run_pg_false,
+     pg.false = pg_false) %>% 
   rio::export('source_data.xlsx')
