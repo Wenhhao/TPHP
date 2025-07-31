@@ -9,10 +9,14 @@ library(pheatmap)
 
 # 0.Input ----------
 ## data matrix and sample annotation ------
-df <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/mapped_pg_matrix_1780_13795.csv')
+df <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/mapped_pg_matrix_1780_13964.csv')
 df_filter <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/data_matrix_filtered_05NA_1899_13516.csv') %>% mutate(V1 = str_replace_all(V1, '\\.', '-'))
-df_q_log2 <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/data_matrix_q_log.csv') %>% mutate(V1 = str_replace_all(V1, '\\.', '-'))
-info <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/20250714_PUH_sample_information_1781files_info_edited_v9.xlsx')
+setdiff(df_filter$V1, df$V1) # pooling samples
+
+# df_q_log2 <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/data_matrix_q_log.csv') %>% mutate(V1 = str_replace_all(V1, '\\.', '-'))
+# info <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/20250714_PUH_sample_information_1781files_info_edited_v9.xlsx')
+info <- rio::import('//172.16.13.136/TPHP/results/rlt_combine_entraplib_G3/20250725_PUH_sample_information_1781files_info_edited_v10.xlsx')
+
 info_datetime <- rio::import('~/GitHub/TPHP/code/datetime_extract/rawdata_datetime.xlsx')
 
 identical(df$V1, info$FileName) # TRUE
@@ -24,14 +28,15 @@ df %<>% filter(V1 %in% info$FileName)
 
 
 ## filter out decoys -----
-matpg <- df %>% column_to_rownames('V1') %>% 
+matpg <- df_filter %>% column_to_rownames('V1') %>% 
   select(matches('^[A-Z0-9]+$')) %>% t()
-min(colSums(!is.na(matpg))) # 487
+dim(matpg) # 13516  1899
+min(colSums(!is.na(matpg))) # 551
 min(rowSums(!is.na(matpg))) # 1
 
 
 info_fit <- info_of_pm(matpg) %>% rename(FileName = Filename) %>% 
-  inner_join(info, .) %>%
+  full_join(info, .) %>%
   mutate(
     sample_type = c('Normal' = 'N', 'adjacent' = 'NT', 'carcinoma' = 'T', 'Fetal' = 'F')[sample_type],
     date.in.filename = date,
@@ -88,7 +93,7 @@ info_fitc <- info_fit1 %>% rbind(info_fit2) %>% as.data.frame() %>%
   set_rownames(.$FileName) %>% .[colnames(matpg), ] %>% 
   remove_rownames()
 
-rio::export(info_fitc, '~/GitHub/TPHP/input/20250722_1775files_add_fields.xlsx')
+rio::export(info_fitc, '~/GitHub/TPHP/input/20250725_1780files_add_fields.xlsx')
 
 identical(colnames(matpg), info_fitc$FileName) # TRUE
 info_fitc %>% count(file_id) %>% count(n) %>% nrow() # 1
@@ -103,18 +108,34 @@ metadata <- info_fitc %>%
 # info_fitc %>% count(Rep_type)
 
 
+## filter out low-quanlity samples -----
+rm.fid <- c()
 
-## replicates check -----
-setdiff(df_q_log2$V1, df$V1) # two not in info, and pooling samples
+# setdiff(colnames(df), colnames(df_filter))
+# colSums(!is.na(df[, -1]))[setdiff(colnames(df), colnames(df_filter))]
+
+pm_filter <- df_filter %>% column_to_rownames('V1') %>% t()
+pm_log2 <- log2(pm_filter)
+pm_q <- preprocessCore::normalize.quantiles(pm_filter, copy = T) %>%
+  set_colnames(colnames(pm_filter)) %>%
+  set_rownames(rownames(pm_filter))
+pm_q_log2 <- log2(pm_q)
+
+
+
+
 df_est <- matpg %>% t() %>% as.data.frame() %>% 
   rownames_to_column('file_id') %>% 
   inner_join(metadata %>% select(file_id:anatomical_classification), .)
 
-df_est_qlog <- df_q_log2 %>% rename(FileName = V1) %>%
+df_est_qlog <- pm_q_log2 %>% t() %>% as.data.frame() %>%
+  rownames_to_column('FileName') %>% 
   inner_join(info_fitc %>% select(FileName, file_id), .) %>% 
   select(-FileName) %>% 
   inner_join(metadata %>% select(file_id:anatomical_classification), .)
 
+
+### replicates check -----
 ### replicates identity
 rep.identity <- df_est %>% filter(!is.na(Rep_type)) %>%
   select(sample_id) %>% 
@@ -228,12 +249,40 @@ ggsave(filename = 'replicates_quality_check.pdf',
                          nrow = 1, ncol = 3, common.legend = T),
        width = 12, height = 12)
 
-rm.fid <- c()
+
 rm.fid.cor <- c('DIA_594_b1')
 rm.fid %<>% union(rm.fid.cor)
 
 
-## filter out low-quality samples -----
+### pooling check ---------
+pool.identity <- df_est %>% filter(!is.na(Rep_type)) %>%
+  select(sample_id) %>% 
+  semi_join(df_est, .) %>% 
+  plyr::ddply('sample_id', function(dfsub){
+    cat(dfsub$sample_id[1], '...\r')
+    X <- dfsub %>%
+      column_to_rownames('file_id') %>%
+      select(-(sample_id:anatomical_classification)) %>% t()
+    ret <- data.frame(file_id = dfsub$file_id,
+                      `# proteins` = colSums(!is.na(X)),
+                      check.names = F)
+    ret$outlier.lower.ingroup <- get_outliers(ret$`# proteins`)[1]
+    return(ret)
+  })
+pool.identity %<>%
+  group_by(sample_id) %>%
+  summarise(identity.mean = mean(`# proteins`)) %>%
+  inner_join(rep.identity, .) %>%
+  arrange(identity.mean) %>%
+  mutate(sample_id = factor(sample_id, levels = unique(sample_id)),
+         Is.Lower.Ingroup = `# proteins` < outlier.lower.ingroup) %>% 
+  inner_join(info_fitc %>% select(file_id, Rep_type))
+
+
+
+
+
+### samples check -----
 ### identity
 est.identity <- plyr::ddply(df_est, c('sample_type', 'tissue_name'), function(dfsub){
   cat(dfsub$sample_type[1], dfsub$tissue_name[1], '...\r')
@@ -264,7 +313,12 @@ est.identity <- rbind(
          Is.Lower.Ingroup = `# proteins` < outlier.lower.ingroup,
          Is.Lower.Total = `# proteins` < outlier.lower.total)
 
-rm.fid.ident <- est.identity.low %>% filter(Is.Lower.Ingroup) %>% pull(file_id)
+est.identity.low <- est.identity %>%
+  filter(sample_type != 'total', tissue_name != 'total') %>% 
+  filter(Is.Lower.Ingroup) %>% 
+  distinct(sample_type, tissue_name) %>% 
+  semi_join(est.identity, .)
+rm.fid.ident <- est.identity.low %>% filter(Is.Lower.Ingroup, `# proteins` < 4000) %>% pull(file_id)
 rm.fid %<>% union(rm.fid.ident)
 
 
@@ -396,19 +450,16 @@ plot_identity <- ggplot(est.identity) +
   theme(text = element_text(size = 10))
 ggsave('dia_quality_check.pdf', plot_identity, width = 10, height = 30)
 
-est.identity.low <- est.identity %>%
-  filter(sample_type != 'total', tissue_name != 'total') %>% 
-  filter(Is.Lower.Ingroup) %>% 
-  distinct(sample_type, tissue_name) %>% 
-  semi_join(est.identity, .)
+
 plot_identity_low <- ggplot(est.identity.low) +
   aes(x = `# proteins`, y = y, group = y) +
   geom_boxplot(color = '#000000', outlier.shape = NA, position = position_dodge(width = 0.6)) +
   geom_jitter(data = est.identity.low %>% filter(!Is.Lower.Ingroup),
               color = '#000000', size = 1, position = position_dodge(width = 0.6)) +
-  geom_point(data = est.identity.low %>% filter(Is.Lower.Ingroup),
+  geom_point(data = est.identity.low %>% filter(Is.Lower.Ingroup, `# proteins` < 4000),
              color = '#c23190', size = 1) +
-  annotate('text', x = 2500, y = 33, size = 3.5, label = '# outliers = 57') +
+  annotate('text', x = 2500, y = 33, size = 3.5,
+           label = str_glue('# outliers = {sum(est.identity.low$Is.Lower.Ingroup & est.identity.low$`# proteins` < 4000)}')) +
   labs(x = "# proteins", y = "Group", subtitle = "Protein identification") +
   theme_bw() +
   theme(text = element_text(size = 10))
@@ -484,6 +535,39 @@ ggsave('dia_quality_pearson_check_compare_normalize.pdf', tmp_p2, width = 5, hei
 #        width = 12, height = 12)
 
 
+
+## filter out decoys -----
+info_fitc %>%
+  filter(sample_type %in% c('T', 'NT')) %>% 
+  count(patient_ID) %>% 
+  count(n) # 12 patients
+
+info_fitc %>%
+  filter(sample_type %in% c('T', 'NT'),
+         !(file_id %in% rm.fid)) %>%
+  count(patient_ID) %>% 
+  count(n) # 18 patients
+
+
+# 1.Diagnosis of batch effect --------
+
+
+
+
+
+
+
+
+# 2.Batch effect correction ---------
+
+
+
+
+
+
+
+
+# 3.Assessment of BECA --------
 
 
 
@@ -705,3 +789,4 @@ list(rep.identity = rep.identity,
      est.pearson = est.pearson) %>%
   rio::export('source_data.xlsx')
 
+save.image('preprocess.RData')

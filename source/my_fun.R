@@ -1,3 +1,9 @@
+# Universal variables -------
+mycolors <- unique(c(ggsci::pal_npg()(10), ggsci::pal_d3()(10), ggsci::pal_cosmic()(10)))
+
+
+
+
 # General functions ----------
 get_outliers <- function(vec, coef = 1.5){
   # outliers based on Q1 and Q3
@@ -834,6 +840,12 @@ nafunctions<-function(x,method="zero"){
 #' @examples
 #' df_filled <- nafunctions(my_data, method = "knn")
 #' @export
+naimpute.methods <- c("zero", "minimum", "colmedian", "rowmedian",
+                      "knn", "seqknn", "bpca", "svd", "lls",
+                      "mle", "qrilc", "mindet", "minprob",
+                      "irm", "impseq", "impseqrob",
+                      "mice_norm", "mice_cart", "trknn",
+                      "rf", "pi", "grr", "gms")
 naimpute <- function(x,
                      method = c("zero", "minimum", "colmedian", "rowmedian",
                                 "knn", "seqknn", "bpca", "svd", "lls",
