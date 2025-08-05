@@ -1,6 +1,6 @@
 # Universal variables -------
 mycolors <- unique(c(ggsci::pal_npg()(10), ggsci::pal_d3()(10), ggsci::pal_cosmic()(10)))
-
+pca_colors <- mycolors[1:22] %>% setNames(c('instrument:anatomical_classification', 'trans:anatomical_classification', 'batch:anatomical_classification', 'sample_type:anatomical_classification', 'new:anatomical_classification', 'anatomical_classification', 'batch:sample_type', 'trans:sample_type', 'instrument:sample_type', 'instrument:batch', 'instrument:trans', 'sample_type:new', 'batch:new', 'trans:batch', 'trans:new', 'batch', 'instrument:new', 'trans', 'sample_type', 'instrument', 'new', 'resid'))
 
 
 
@@ -65,6 +65,25 @@ info_of_pm <- function(pm){
   
   info$new <- ifelse(grepl('^2022', info$month), 'new', 'old')
   return(info)
+}
+
+create_dataframe_from_list <- function(named_list, method = 'extend') {
+  method_list <- c('extend', 'trim')
+  if (!(method %in% method_list)){
+    stop('method should be extend or trim')
+  }
+  if (method == 'extend'){
+    max_length <- max(sapply(named_list, length))
+    new_list <- lapply(named_list, function(v){
+      c(v, rep(NA, max_length - length(v)))
+    })
+  } else if (method == 'trim'){
+    min_length <- min(sapply(named_list, length))
+    new_list <- lapply(named_list, function(v) head(v, min_length))
+  }
+  
+  result_df <- as.data.frame(new_list)
+  return(result_df)
 }
 
 read_excel_allsheets <- function(filename, tibble = FALSE) {

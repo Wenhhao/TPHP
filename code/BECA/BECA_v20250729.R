@@ -800,6 +800,304 @@ save(res_hc_ls, file = 'res_hc_ls.RData')
 
 
 
+## Relative Log Expression -----
+beca.RLE <- function(X, meta_df, id_col){
+  # Calculate Relative Log Expression (RLE) values
+  # For each gene j, calculate its median expression across the m samples, i.e. Med(y*j), then calculate the deviations from this median, i.e. calculate yij − Med(y*j), across the is
+  # For each sample, generate a boxplot of all the deviations for that sample.
+  feature_med <- apply(X, 1, median, na.rm = T)
+  rle_matrix <- X - feature_med
+  
+  df_rle <- rle_matrix %>% t() %>% as.data.frame() %>% 
+    rownames_to_column(id_col) %>% 
+    inner_join(meta_df, .)
+  return(df_rle)
+}
+
+res_rle_ls <- list()
+for(i in seq_along(names(pm_list))){
+  cat(i, '...\n')
+  nm <- names(pm_list)[i]
+  X <- pm_list[[nm]]
+  
+  res_rle_ls[[i]] <- beca.RLE(X,
+                              meta_df %>%
+                                mutate(sample_type = factor(sample_type, c('F', 'T', 'NT', 'N', 'p'))) %>%
+                                arrange(sample_type, DateTime),
+                              'file_id')
+}
+names(res_rle_ls) <- names(pm_list)
+save(res_rle_ls, file = 'res_rle_ls.RData')
+
+
+graphics.off()
+pdf('BECA_diag_rle.pdf', width = 50, height = 10)
+for(nm in names(res_rle_ls)){
+  cat(nm, '...\n')
+  plot_rle <- res_rle_ls[[nm]] %>%
+    select(-(instrument:new), -DateTime) %>%
+    pivot_longer(cols = -(file_id:sample_type), names_to = 'Protein', values_to = 'RLE') %>% 
+    mutate(file_id = factor(file_id, df_rle$file_id)) %>% 
+    ggplot() +
+    aes(x = file_id, y = RLE, color = sample_type) +
+    geom_boxplot(outlier.size = 0.1, width = 0.1) +
+    labs(x = "File ID", y = "RLE", subtitle = str_glue('RLE boxplot: {nm}')) +
+    theme_classic() +
+    theme(text = element_text(size = 10))
+  print(plot_rle)
+}
+graphics.off()
+# ggsave('rle.pdf', plot_rle, width = 50, height = 10, limitsize = F)
+
+
+
+
+
+
+
+
+
+ann_col <- df_rle %>% column_to_rownames('file_id') %>% select(1:DateTime)
+mat_rle <- df_rle %>% column_to_rownames('file_id') %>%
+  select(-(1:DateTime)) %>% 
+  t()
+
+# res_rle_ls <- list()
+# res_rle_ls[[i]] <- pheatmap(
+#   mat_rle, scale = "none",
+#   cluster_cols = F, cluster_rows = T,
+#   # clustering_distance_cols = "euclidean",
+#   clustering_distance_rows = "euclidean",
+#   clustering_method = "ward.D2",
+#   annotation_col = ann_col %>% select(-DateTime),
+#   annotation_colors = ann_clrs,
+#   show_rownames = FALSE, show_colnames = FALSE,
+#   main = str_glue("Relative Log Expression (NA impute method: {nm})"),
+#   filename = str_glue('BECA_diag_rle_{nm}.pdf'), width = 12, height = 5
+# )
+
+
+
+# plot_rle <- ggplot(rle_df, aes(x = Sample, y = RLE, fill = Batch)) +
+#   geom_boxplot(outlier.shape = NA) +
+#   labs(title = "Relative Log Expression (RLE) Plot by Sample",
+#        y = "Relative Log Expression (log2 scale)",
+#        x = "Sample") +
+#   theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# ggsave('rle.pdf', plot_rle, width = 10, height = 10)
+
+
+
+## Principal Variance Component Analysis --------
+my_pvcaBatchAssess <- function (theDataMatrix, expInfo, threshold) {
+  # Cite: Bushel P (2024). pvca: Principal Variance Component Analysis (PVCA). R package version 1.44.0.
+  # https://doi.org/10.1002/9780470685983.ch12
+  # theDataMatrix, row as probs, col as samples;
+  dataRowN <- nrow(theDataMatrix)
+  dataColN <- ncol(theDataMatrix)
+  theDataMatrixCentered_transposed = apply(theDataMatrix, 1, 
+                                           scale, center = TRUE, scale = FALSE)
+  theDataMatrixCentered = t(theDataMatrixCentered_transposed)
+  theDataCor <- cor(theDataMatrixCentered)
+  eigenData <- eigen(theDataCor)
+  eigenValues = eigenData$values
+  ev_n <- length(eigenValues)
+  eigenVectorsMatrix = eigenData$vectors
+  eigenValuesSum = sum(eigenValues)
+  percents_PCs = eigenValues/eigenValuesSum
+  
+  exp_design <- as.data.frame(expInfo)
+  expDesignRowN <- nrow(exp_design)
+  expDesignColN <- ncol(exp_design)
+  my_counter_2 = 0
+  my_sum_2 = 1
+  for (i in ev_n:1) {
+    my_sum_2 = my_sum_2 - percents_PCs[i]
+    if ((my_sum_2) <= threshold) {
+      my_counter_2 = my_counter_2 + 1
+    }
+  }
+  pc_n <- ifelse(my_counter_2 < 3, 3, my_counter_2)
+  pc_data_matrix <- matrix(data = 0, nrow = (expDesignRowN * 
+                                               pc_n), ncol = 1)
+  mycounter = 0
+  for (i in 1:pc_n) {
+    for (j in 1:expDesignRowN) {
+      mycounter <- mycounter + 1
+      pc_data_matrix[mycounter, 1] = eigenVectorsMatrix[j, 
+                                                        i]
+    }
+  }
+  AAA <- exp_design[rep(1:expDesignRowN, pc_n), ]
+  Data <- cbind(AAA, pc_data_matrix)
+  variables <- c(colnames(exp_design))
+  for (i in 1:length(variables)) {
+    Data$variables[i] <- as.factor(Data$variables[i])
+  }
+  op <- options(warn = (-1))
+  on.exit(options(op))
+  effects_n = expDesignColN + choose(expDesignColN, 2) + 1
+  randomEffectsMatrix <- matrix(data = 0, nrow = pc_n, ncol = effects_n)
+  model.func <- c()
+  index <- 1
+  for (i in 1:length(variables)) {
+    mod = paste("(1|", variables[i], ")", sep = "")
+    model.func[index] = mod
+    index = index + 1
+  }
+  for (i in 1:(length(variables) - 1)) {
+    for (j in (i + 1):length(variables)) {
+      mod = paste("(1|", variables[i], ":", variables[j], 
+                  ")", sep = "")
+      model.func[index] = mod
+      index = index + 1
+    }
+  }
+  function.mods <- paste(model.func, collapse = " + ")
+  for (i in 1:pc_n) {
+    y = (((i - 1) * expDesignRowN) + 1)
+    funct <- paste("pc_data_matrix", function.mods, sep = " ~ ")
+    Rm1ML <- lme4::lmer(funct, Data[y:(((i - 1) * expDesignRowN) + 
+                                         expDesignRowN), ], REML = TRUE, verbose = FALSE, 
+                        na.action = na.omit)
+    randomEffects <- Rm1ML
+    randomEffectsMatrix[i, ] <- c(unlist(lme4::VarCorr(Rm1ML)), 
+                                  resid = sigma(Rm1ML)^2)
+  }
+  effectsNames <- c(names(lme4::getME(Rm1ML, "cnms")), "resid")
+  randomEffectsMatrixStdze <- matrix(data = 0, nrow = pc_n, 
+                                     ncol = effects_n)
+  for (i in 1:pc_n) {
+    mySum = sum(randomEffectsMatrix[i, ])
+    for (j in 1:effects_n) {
+      randomEffectsMatrixStdze[i, j] = randomEffectsMatrix[i, j]/mySum
+    }
+  }
+  randomEffectsMatrixWtProp <- matrix(data = 0, nrow = pc_n, 
+                                      ncol = effects_n)
+  for (i in 1:pc_n) {
+    weight = eigenValues[i]/eigenValuesSum
+    for (j in 1:effects_n) {
+      randomEffectsMatrixWtProp[i, j] = randomEffectsMatrixStdze[i, j] * weight
+    }
+  }
+  randomEffectsSums <- matrix(data = 0, nrow = 1, ncol = effects_n)
+  randomEffectsSums <- colSums(randomEffectsMatrixWtProp)
+  totalSum = sum(randomEffectsSums)
+  randomEffectsMatrixWtAveProp <- matrix(data = 0, nrow = 1, 
+                                         ncol = effects_n)
+  for (j in 1:effects_n) {
+    randomEffectsMatrixWtAveProp[j] = randomEffectsSums[j]/totalSum
+  }
+  return(list(dat = randomEffectsMatrixWtAveProp, label = effectsNames, matrixWtProp = set_colnames(randomEffectsMatrixWtProp, effectsNames), eigenData = eigenData))
+}
+# pca_colors <- c('#D7DA86', '#330A5FFF', '#FCB519FF', '#ED6925FF', '#781C6DFF', '#BB3754FF', '#000004FF') %>% setNames(c('resid', 'instrument', 'trans', 'Patient', 'instrument:trans'))
+
+res_pvca_ls <- list()
+for(i in seq_along(names(pm_list))[-1]){
+  cat(i, '...\n')
+  nm <- names(pm_list)[i]
+  X <- pm_list[[nm]]
+  theDataMatrix <- t(X)
+  expInfo <- metadata %>%
+    column_to_rownames('file_id') %>%
+    select(instrument, trans, batch, sample_type, new, anatomical_classification)
+  threshold <- 0.9
+  pvca <- my_pvcaBatchAssess(theDataMatrix, expInfo, threshold)
+
+  res_pvca_ls[[i-1]] <- pvca
+}
+names(res_pvca_ls) <- names(pm_list)[-1]
+
+save(res_pvca_ls, file = 'res_pvca_ls.RData')
+
+
+
+pvca <- res_pvca_ls$minimum
+
+
+# Average proportion
+df_pvca <- data.frame(t(pvca$dat)) %>% 
+  cbind(pvca$label) %>% 
+  setNames(c('RandomEffectWtAveProp', 'EffectName')) %>% 
+  arrange(RandomEffectWtAveProp) %>% 
+  mutate(EffectName = factor(EffectName, levels = EffectName)) %>% 
+  arrange(desc(RandomEffectWtAveProp)) %>% 
+  mutate(y_label = cumsum(RandomEffectWtAveProp) - 0.5 * RandomEffectWtAveProp)
+plot_pvca <- ggplot(df_pvca, aes(x = 2, y = RandomEffectWtAveProp, fill = EffectName)) +
+  geom_bar(stat = 'identity', color = 'white') +
+  coord_polar(theta = 'y', start = 0) +
+  theme(legend.position = 'none') +
+  geom_text(aes(y = y_label, label = round(RandomEffectWtAveProp*100, 2)), color = 'white', size = 6) +
+  scale_fill_manual(values = pca_colors) +
+  theme_void() +
+  xlim(0.5, 2.5)
+
+# every PC
+df_prop <- data.frame(pvca$matrixWtProp)
+df_prop_percent <- data.frame(t(apply(df_prop, 1, function(x) x / sum(x))))
+df_prop_percent$PC <- str_glue('PC{1:nrow(df_prop_percent)}: ({round(100 * pvca$eigenData$values[1:nrow(df_prop_percent)] / sum(pvca$eigenData$values[1:nrow(df_prop_percent)]), 2)} %)')
+df_prop_percent$PC %<>% factor(., levels = .)
+
+plot_pvca_individual <- plyr::dlply(df_prop_percent, 'PC', function(dfsub){
+  tbl <- dfsub %>% select(-PC) %>% 
+    setNames(., str_replace(names(.), '\\.', ':')) %>% 
+    t() %>% data.frame() %>% 
+    setNames('RandomEffectWtAveProp') %>% 
+    rownames_to_column('EffectName') %>% 
+    arrange(RandomEffectWtAveProp) %>% 
+    mutate(EffectName = factor(EffectName, levels = EffectName)) %>% 
+    arrange(desc(RandomEffectWtAveProp)) %>% 
+    mutate(y_label = cumsum(RandomEffectWtAveProp) - 0.5 * RandomEffectWtAveProp)
+  
+  set.seed(1000)
+  ggplot(tbl, aes(x = 2, y = RandomEffectWtAveProp, fill = EffectName)) +
+    geom_bar(stat = 'identity', color = 'white') +
+    coord_polar(theta = 'y', start = 0) +
+    geom_text(aes(y = y_label, label = round(RandomEffectWtAveProp*100, 2)), color = 'white', size = 6) +
+    scale_fill_manual(values = pca_colors) +
+    labs(subtitle = dfsub$PC) +
+    theme_void() +
+    theme(legend.position = 'none') +
+    xlim(0.5, 2.5)
+})
+length(plot_pvca_individual) # 771
+legend_pies <- ggpubr::get_legend(plot_pvca)
+p <- ggpubr::ggarrange(plotlist = plot_pvca_individual, nrow = 20, ncol = 40) %>%
+  ggpubr::ggarrange(legend_pies, widths = c(0.95, 0.05))
+plot(cumsum(pvca$eigenData$values / sum(pvca$eigenData$values)), xlab = 'PC_n', ylab = 'Summed eigenvalues proportion')
+ggsave('BECA_diag_pvca_individual_minimum.pdf', p, width = 4*40, height = 4*20, limitsize = F)
+
+
+# top3 PCs
+pvca$eigenData$values[1:3]
+dfsub <- apply(df_prop_percent[1:3, 1:22], 2, function(y) {
+  y * pvca$eigenData$values[1:3]
+}) %>% as.data.frame() %>%
+  mutate_all(sum) %>% slice(1)
+dfsub <- dfsub / sum(dfsub)
+PVCA_top3 <- dfsub %>%
+  setNames(., str_replace(names(.), '\\.', ':')) %>% 
+  t() %>% data.frame() %>% 
+  setNames('RandomEffectWtAveProp') %>% 
+  rownames_to_column('EffectName') %>% 
+  arrange(RandomEffectWtAveProp) %>% 
+  mutate(EffectName = factor(EffectName, levels = EffectName)) %>% 
+  arrange(desc(RandomEffectWtAveProp)) %>% 
+  mutate(y_label = cumsum(RandomEffectWtAveProp) - 0.5 * RandomEffectWtAveProp)
+
+
+plot_PVCA_top3 <- ggplot(PVCA_top3, aes(x = 2, y = RandomEffectWtAveProp, fill = EffectName)) +
+  geom_bar(stat = 'identity', color = 'white') +
+  coord_polar(theta = 'y', start = 0) +
+  geom_text(aes(y = y_label, label = round(RandomEffectWtAveProp*100, 2)), color = 'white', size = 6) +
+  # geom_text(aes(x = 1, y = y_label, label = round(RandomEffectWtAveProp*100, 2)), color = 'black', size = 6) +
+  scale_fill_manual(values = pca_colors) +
+  labs(subtitle = dfsub$PC) +
+  theme_void() +
+  xlim(0.5, 2.5)
+
+ggsave('BECA_diag_pvca_top3PCs_minimum.pdf',plot_PVCA_top3, width = 7, height = 4)
 
 
 
@@ -1036,4 +1334,5 @@ list(rep.identity = rep.identity,
      BECA.DR = tbl_dr) %>%
   rio::export('source_data.xlsx')
 
-# save.image('preprocess.RData')
+# save.image('BEAC_v20250729.RData')
+
