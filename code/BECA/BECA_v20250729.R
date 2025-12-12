@@ -604,8 +604,8 @@ names(pm_list)[seq_along(pm_list)[-1]] <- mds
 
 ## Dimension reduction ------
 
-beca.DR <- function(X, meta_df, id_col, var_col, date_col, seed = NA){
-  # Prepared data for PCA/t-SNE/UMAP (samples as rows, features as columns)
+beca.DR <- function(X, meta_df, id_col, var_col, date_col = NULL, seed = NA){
+  # Transpose to prepare data for PCA/t-SNE/UMAP (samples as rows, features as columns)
   # each row = one sample, each column = a feature
   t_expr <- t(X)
   
@@ -628,20 +628,22 @@ beca.DR <- function(X, meta_df, id_col, var_col, date_col, seed = NA){
       theme_bw() +
       theme(text = element_text(size = 10))
   }) %>% setNames(var_col)
-  plots_pca$DateTime <- ggplot(pca_df) +
-    aes(x = PC1, y = PC2) +
-    geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
-    labs(title = str_c("PCA: Samples colored by ", date_col),
-         x = str_c("PC1 (", round(summary(pca_res)$importance[2,1]*100,1), "%)"),
-         y = str_c("PC2 (", round(summary(pca_res)$importance[2,2]*100,1), "%)")) +
-    scale_color_viridis_c(
-      option = 'G', begin = 0.05, end = 0.95,
-      name   = "Sample date",
-      breaks  = as.numeric(date_breaks("2 month")(range(pca_df$DateTime))),
-      labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(pca_df$DateTime)))
-    ) +
-    theme_bw() +
-    theme(text = element_text(size = 10))
+  if(!is.null(date_col)){
+    plots_pca$DateTime <- ggplot(pca_df) +
+      aes(x = PC1, y = PC2) +
+      geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
+      labs(title = str_c("PCA: Samples colored by ", date_col),
+           x = str_c("PC1 (", round(summary(pca_res)$importance[2,1]*100,1), "%)"),
+           y = str_c("PC2 (", round(summary(pca_res)$importance[2,2]*100,1), "%)")) +
+      scale_color_viridis_c(
+        option = 'G', begin = 0.05, end = 0.95,
+        name   = "Sample date",
+        breaks  = as.numeric(date_breaks("2 month")(range(pca_df$DateTime))),
+        labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(pca_df$DateTime)))
+      ) +
+      theme_bw() +
+      theme(text = element_text(size = 10))
+  }
   # ggpubr::ggarrange(plotlist = plots_pca)
   
   # t-SNE computation (perplexity adjusted for dataset size)
@@ -661,18 +663,20 @@ beca.DR <- function(X, meta_df, id_col, var_col, date_col, seed = NA){
       theme_bw() +
       theme(text = element_text(size = 10))
   }) %>% setNames(var_col)
-  plots_tsne$DateTime <- ggplot(tsne_df) +
-    aes(x = Dim1, y = Dim2) +
-    geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
-    labs(title = str_c("t-SNE: Samples colored by ", date_col), x = "t-SNE Dim1", y = "t-SNE Dim2") +
-    scale_color_viridis_c(
-      option = 'G', begin = 0.05, end = 0.95,
-      name   = "Sample date",
-      breaks  = as.numeric(date_breaks("2 month")(range(pca_df$DateTime))),
-      labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(pca_df$DateTime)))
-    ) +
-    theme_bw() +
-    theme(text = element_text(size = 10))
+  if(!is.null(date_col)){
+    plots_tsne$DateTime <- ggplot(tsne_df) +
+      aes(x = Dim1, y = Dim2) +
+      geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
+      labs(title = str_c("t-SNE: Samples colored by ", date_col), x = "t-SNE Dim1", y = "t-SNE Dim2") +
+      scale_color_viridis_c(
+        option = 'G', begin = 0.05, end = 0.95,
+        name   = "Sample date",
+        breaks  = as.numeric(date_breaks("2 month")(range(pca_df$DateTime))),
+        labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(pca_df$DateTime)))
+      ) +
+      theme_bw() +
+      theme(text = element_text(size = 10))
+  }
   # ggpubr::ggarrange(plotlist = plots_tsne)
   
   # UMAP computation
@@ -692,18 +696,20 @@ beca.DR <- function(X, meta_df, id_col, var_col, date_col, seed = NA){
       theme_bw() +
       theme(text = element_text(size = 10))
   }) %>% setNames(var_col)
-  plots_umap$DateTime <- ggplot(umap_df) +
-    aes(x = UM1, y = UM2) +
-    geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
-    labs(title = str_c("UMAP: Samples colored by ", date_col), x = "UMAP1", y = "UMAP2") +
-    scale_color_viridis_c(
-      option = 'G', begin = 0.05, end = 0.95,
-      name   = "Sample date",
-      breaks  = as.numeric(date_breaks("2 month")(range(umap_df$DateTime))),
-      labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(umap_df$DateTime)))
-    ) +
-    theme_bw() +
-    theme(text = element_text(size = 10))
+  if(!is.null(date_col)){
+    plots_umap$DateTime <- ggplot(umap_df) +
+      aes(x = UM1, y = UM2) +
+      geom_point(aes_string(color = date_col), size = 2, alpha = 0.8) +
+      labs(title = str_c("UMAP: Samples colored by ", date_col), x = "UMAP1", y = "UMAP2") +
+      scale_color_viridis_c(
+        option = 'G', begin = 0.05, end = 0.95,
+        name   = "Sample date",
+        breaks  = as.numeric(date_breaks("2 month")(range(umap_df$DateTime))),
+        labels  = date_format("%Y-%m-%d")(date_breaks("2 month")(range(umap_df$DateTime)))
+      ) +
+      theme_bw() +
+      theme(text = element_text(size = 10))
+  }
   # ggpubr::ggarrange(plotlist = plots_umap)
   
   ret <- list(pca_res = pca_res, pca_df = pca_df, plots_pca = plots_pca,

@@ -34,8 +34,8 @@ code/BECA/dia_quality_pearson_check_log2.pdf
 code/BECA/dia_quality_pearson_check_q_log2.pdf
 code/BECA/metadata_allChip_20211027.csv
 code/BECA/pm_list.RData
-code/BECA/preprocess.RData
-code/BECA/replicates_quality_check.pdf
-code/BECA/replicates_quality_check.png
-code/BECA/res_dr_ls.RData
-code/BECA/res_hc_ls.RData
+code/BECA/*.RData
+code/BECA/*.pdf
+code/BECA/*.png
+code/harmonizR/*RData
+code/harmonizR/PUH_pg_12019_2990_HarmonizR_cured.tsv
